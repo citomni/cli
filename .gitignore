@@ -1,0 +1,6 @@
+# Globals
+*.bck
+dir.txt
+
+**/backups/
+**/_internal/
