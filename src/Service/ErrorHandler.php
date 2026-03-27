@@ -169,8 +169,12 @@ final class ErrorHandler extends BaseService {
 		$this->renderMask &= ~(E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR);
 
 		$this->logMask  = (int)($this->opt['log']['trigger'] ?? E_ALL);
-		$dir = (string)($this->opt['log']['path'] ?? (\CITOMNI_APP_PATH . '/var/logs'));
-		$this->logDir   = \rtrim($dir, '/\\');
+
+		$dir = (string)($this->opt['log']['path'] ?? '');
+		$dir = \trim($dir);
+		if ($dir === '') $dir = \CITOMNI_APP_PATH . '/var/logs';
+		$this->logDir = \rtrim($dir, '/\\');
+
 		$this->maxBytes = (int)($this->opt['log']['max_bytes'] ?? 2_000_000);
 		$this->maxFiles = (int)($this->opt['log']['max_files'] ?? 10);
 
@@ -456,8 +460,22 @@ final class ErrorHandler extends BaseService {
 	 */
 	private function writeJsonl(string $file, array $record): void {
 		try {
-			if (!\is_dir($this->logDir) && !@\mkdir($this->logDir, 0775, true)) {
-				throw new \RuntimeException('log dir create failed');
+			if ($this->logDir === '') {
+				throw new \RuntimeException('log dir is empty');
+			}
+
+			if (\file_exists($this->logDir) && !\is_dir($this->logDir)) {
+				throw new \RuntimeException(
+					'log path exists but is not a directory: ' . $this->logDir
+				);
+			}
+
+			if (!\is_dir($this->logDir)) {
+				if (!@\mkdir($this->logDir, 0775, true) && !\is_dir($this->logDir)) {
+					throw new \RuntimeException(
+						'log dir create failed: ' . $this->logDir
+					);
+				}
 			}
 
 			$encoded = \json_encode(
@@ -467,42 +485,37 @@ final class ErrorHandler extends BaseService {
 			if ($encoded === false) {
 				$encoded = '{"encode_error":true}';
 			}
+
 			$line = $encoded . "\n";
-
 			$threshold = \max(1, (int)$this->maxBytes);
-
 			$fh = @\fopen($file, 'ab');
 			if ($fh === false) {
-				throw new \RuntimeException('open failed');
+				throw new \RuntimeException('open failed: ' . $file);
 			}
 
 			try {
 				@\flock($fh, \LOCK_EX);
-
 				\clearstatcache(true, $file);
 				$size = @\filesize($file) ?: 0;
 
 				if (($size + \strlen($line)) > $threshold) {
 					@\flock($fh, \LOCK_UN);
 					@\fclose($fh);
-
 					$this->rotate($file);
 
 					$fh = @\fopen($file, 'ab');
 					if ($fh === false) {
-						throw new \RuntimeException('reopen failed');
+						throw new \RuntimeException('reopen failed: ' . $file);
 					}
 					@\flock($fh, \LOCK_EX);
 				}
 
 				@\fwrite($fh, $line);
 				@\fflush($fh);
-
 			} finally {
 				@\flock($fh, \LOCK_UN);
 				@\fclose($fh);
 			}
-
 		} catch (\Throwable $t) {
 			@\error_log('[CitOmni CLI] writeJsonl failed: ' . $t->getMessage());
 		}
