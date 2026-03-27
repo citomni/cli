@@ -57,6 +57,7 @@ use CitOmni\Kernel\Runtime;
  */
 final class Kernel {
 
+
 	/**
 	 * Boot the CLI application without dispatching.
 	 *
@@ -88,6 +89,7 @@ final class Kernel {
 		return $app;
 	}
 
+
 	/**
 	 * Boot and dispatch a CLI command from argv.
 	 *
@@ -104,4 +106,5 @@ final class Kernel {
 		$exitCode = $app->runner->run($argv);
 		exit($exitCode);
 	}
+
 }
