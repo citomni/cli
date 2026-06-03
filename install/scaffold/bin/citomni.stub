@@ -1,0 +1,121 @@
+<?php
+declare(strict_types=1);
+/*
+ * SPDX-License-Identifier: MIT
+ * Copyright (C) 2012-2025 Lars Grove Mortensen
+ *
+ * CitOmni CLI Skeleton - Minimal starter for high-performance CitOmni CLI apps.
+ * Source:  https://github.com/citomni/cli-skeleton
+ * License: See the LICENSE file for full terms.
+ */
+
+
+/*
+ *---------------------------------------------------------------
+ * SCRIPT START TIME
+ *---------------------------------------------------------------
+ * Capture precise start time to measure total execution time.
+ */
+define('CITOMNI_START_NS', hrtime(true));
+
+
+/*
+ *---------------------------------------------------------------
+ * APPLICATION ENVIRONMENT
+ *---------------------------------------------------------------
+ * The environment determines how the application behaves:
+ * - 'dev': Development environment with verbose diagnostics.
+ * - 'stage': Staging environment for final pre-production testing.
+ * - 'prod': Production environment with minimal error exposure.
+ */
+define('CITOMNI_ENVIRONMENT', 'dev'); // 'dev' | 'stage' | 'prod'
+
+
+/*
+ *---------------------------------------------------------------
+ * PATH & URL CONSTANTS (read-only)
+ *---------------------------------------------------------------
+ * These constants are resolved as early as possible for maximum
+ * robustness and minimal overhead across the whole app.
+ *
+ * CITOMNI_PUBLIC_PATH
+ *   Absolute path to /public (no trailing slash).
+ *
+ * CITOMNI_APP_PATH
+ *   Absolute path to the application root.
+ *
+ * CITOMNI_PUBLIC_ROOT_URL  (optional override)
+ *   Absolute public base URL (no trailing slash).
+ *
+ * Why define web-related constants in CLI?
+ * - Some shared services and app code may need to generate absolute URLs.
+ * - CLI jobs may send mails, build links, or render notifications that
+ *   depend on the app's public base URL.
+ * - Keeping these constants available in both HTTP and CLI reduces
+ *   conditional code and keeps shared logic deterministic.
+ */
+define('CITOMNI_PUBLIC_PATH', \dirname(__DIR__) . '/public');
+define('CITOMNI_APP_PATH', \dirname(__DIR__));
+
+// Optional but recommended when shared code needs absolute public URLs.
+// Especially useful on stage/prod, where auto-detection is not available in CLI.
+if (\defined('CITOMNI_ENVIRONMENT') && \CITOMNI_ENVIRONMENT !== 'dev') {
+	// e.g. 'https://stage.example.com' or 'https://www.example.com'
+	define('CITOMNI_PUBLIC_ROOT_URL', 'https://www.example.com');
+}
+
+
+/*
+ *---------------------------------------------------------------
+ * COMPOSER AUTOLOAD
+ *---------------------------------------------------------------
+ * Loads Composer's autoloader, which makes all project classes
+ * and dependencies available. This includes CitOmni Kernel,
+ * CitOmni CLI, optional infrastructure packages, and any
+ * third-party libraries the application requires.
+ *
+ * The default location is /app/vendor/autoload.php, since all
+ * dependencies are expected to live inside the app path.
+ *
+ * If your application uses a different structure, update this
+ * single line to point to the correct autoload.php file.
+ */
+require CITOMNI_APP_PATH . '/vendor/autoload.php';
+
+
+/*
+ *---------------------------------------------------------------
+ * HAND-OFF TO CITOMNI CLI KERNEL
+ *---------------------------------------------------------------
+ * You made it through bin/citomni. From here, the CLI kernel
+ * takes over:
+ * - Finalizes bootstrapping (this file should stay tiny)
+ * - Loads and merges config from /config (vendor -> providers.php -> app/env)
+ * - Boots the App in CLI mode and wires core services
+ * - Applies shared runtime configuration (timezone, charset, ICU best-effort)
+ * - Installs the CLI error handler when registered
+ * - Dispatches the Runner to the requested command
+ *
+ * WHAT *YOU* DO HERE IN bin/citomni (keep it minimal):
+ *
+ *  1) Require Composer's autoloader
+ *     require CITOMNI_APP_PATH . '/vendor/autoload.php';
+ *
+ *  2) Define your environment early
+ *     define('CITOMNI_ENVIRONMENT', 'dev'); // 'dev'|'stage'|'prod'
+ *
+ *  3) Define stable path/url constants used by shared code
+ *     define('CITOMNI_PUBLIC_PATH', \dirname(__DIR__) . '/public');
+ *     define('CITOMNI_APP_PATH', \dirname(__DIR__));
+ *     define('CITOMNI_PUBLIC_ROOT_URL', 'https://www.example.com'); // optional
+ *
+ * NOTES
+ * - CLI intentionally takes an explicit /config path. No path guessing.
+ * - If var/cache/cfg.cli.php, var/cache/commands.cli.php, and
+ *   var/cache/services.cli.php exist, the kernel will use them to
+ *   minimize per-run overhead.
+ * - Command dispatch is handled by the Runner service through
+ *   $app->commands, not HTTP routes.
+ * - Exit code propagation is handled by the CLI kernel.
+ */
+\CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $_SERVER['argv'] ?? []);
