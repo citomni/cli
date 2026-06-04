@@ -5,9 +5,19 @@
 	"license": "MIT",
 	"homepage": "https://github.com/citomni/cli",
 	"keywords": [
-		"citomni", "cli", "console", "command", "runner", "kernel",
-		"dispatch", "terminal", "php8", "framework", "psr-4",
-		"performance", "high-performance"
+		"citomni",
+		"cli",
+		"console",
+		"command",
+		"runner",
+		"kernel",
+		"dispatch",
+		"terminal",
+		"php8",
+		"framework",
+		"psr-4",
+		"performance",
+		"high-performance"
 	],
 	"require": {
 		"php": "^8.2",
@@ -63,5 +73,10 @@
 			"/.vscode",
 			"/Makefile"
 		]
+	},
+	"extra": {
+		"branch-alias": {
+			"dev-main": "1.0.x-dev"
+		}
 	}
 }
