@@ -10,7 +10,6 @@ return [
 			'type' => 'entrypoint',
 			'policy' => 'managed',
 		],
-
 		[
 			'target' => 'config/citomni_cli_cfg.php',
 			'source' => 'install/scaffold/config/citomni_cli_cfg.php.stub',
@@ -35,7 +34,12 @@ return [
 			'type' => 'config',
 			'policy' => 'create-only',
 		],
-
+		[
+			'target' => 'config/services_cli.php',
+			'source' => 'install/scaffold/config/services_cli.php.stub',
+			'type' => 'service-map',
+			'policy' => 'create-only',
+		],
 		[
 			'target' => 'config/citomni_cli_commands.php',
 			'source' => 'install/scaffold/config/citomni_cli_commands.php.stub',
