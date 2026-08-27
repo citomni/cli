@@ -154,7 +154,10 @@ final class Registry {
 	 * - Empty arrays are ignored during merge.
 	 */
 	public const COMMANDS_CLI = [
-		// ...
+		'app:info' => [
+			'command'     => \CitOmni\Cli\Command\AppInfoCommand::class,
+			'description' => 'Show application and runtime information.',
+		],
 	];
 
 }
