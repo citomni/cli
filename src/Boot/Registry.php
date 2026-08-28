@@ -23,10 +23,11 @@ final class Registry {
 	 * Behavior:
 	 * - This is tier 1 in the deterministic CLI service map merge:
 	 *   1) Vendor baseline: \CitOmni\Cli\Boot\Registry::MAP_CLI
-	 *   2) Providers: /config/providers.php (their MAP_CLI blocks)
-	 *   3) App map: /config/services.php
-	 * - Service merge semantics use PHP array union (`+`):
-	 *   left wins, later layers only fill keys not already defined.
+	 *   2) Providers: /config/providers.php (MAP_COMMON, then MAP_CLI)
+	 *   3) App common map: /config/services.php
+	 *   4) App CLI map: /config/services_cli.php
+	 * - Service merge semantics use PHP array union (`+`) with each later
+	 *   source placed on the left, so later sources override earlier sources.
 	 *
 	 * Notes:
 	 * - Service IDs are resolved via $this->app->{id}.
@@ -34,8 +35,8 @@ final class Registry {
 	 * - Definitions must be either:
 	 *   - 'id' => FQCN
 	 *   - 'id' => ['class' => FQCN, 'options' => [...]]
-	 * - /config/services.php has highest precedence and can override both providers
-	 *   and vendor baseline.
+	 * - /config/services_cli.php has highest precedence in CLI mode, followed by
+	 *   /config/services.php, providers, and the vendor baseline.
 	 */
 	public const MAP_CLI = [
 		'runner' => \CitOmni\Cli\Service\Runner::class,
@@ -53,9 +54,11 @@ final class Registry {
 	 * Behavior:
 	 * - This is tier 1 in the deterministic CLI config merge:
 	 *   1) Vendor baseline: \CitOmni\Cli\Boot\Registry::CFG_CLI
-	 *   2) Providers: /config/providers.php (their CFG_CLI blocks)
-	 *   3) App base: /config/citomni_cli_cfg.php
-	 *   4) Env overlay: /config/citomni_cli_cfg.{ENV}.php
+	 *   2) Providers: /config/providers.php (CFG_COMMON, then CFG_CLI)
+	 *   3) App common: /config/citomni_cfg.php
+	 *   4) App CLI: /config/citomni_cli_cfg.php
+	 *   5) App common env: /config/citomni_cfg.{ENV}.php
+	 *   6) App CLI env: /config/citomni_cli_cfg.{ENV}.php
 	 * - Config merge semantics are deep associative merge with last wins.
 	 *
 	 * Notes:
@@ -67,19 +70,6 @@ final class Registry {
 	 */
 	public const CFG_CLI = [
 
-		/*
-		 *------------------------------------------------------------------
-		 * LOCALE
-		 *------------------------------------------------------------------
-		 */
-		'locale' => [
-			'language'		=> 'en',
-			'icu_locale'	=> 'en_US',
-			'timezone'		=> 'UTC',
-			'charset'		=> 'UTF-8',
-		],		
-		
-		
 		/*
 		 *------------------------------------------------------------------
 		 * ERROR HANDLER (CLI)
@@ -136,21 +126,21 @@ final class Registry {
 	
 
 	/**
-	 * Vendor baseline route map for CLI mode.
+	 * Vendor baseline command map for CLI mode.
 	 *
 	 * Behavior:
-	 * - This is tier 1 in the deterministic CLI route merge:
+	 * - This is tier 1 in the deterministic CLI command map merge:
 	 *   1) Vendor baseline: \CitOmni\Cli\Boot\Registry::COMMANDS_CLI
 	 *   2) Providers: /config/providers.php (their COMMANDS_CLI blocks)
-	 *   3) App base: /config/citomni_cli_routes.php
-	 *   4) Env overlay: /config/citomni_cli_routes.{ENV}.php
-	 * - Route merge semantics are deep associative merge with last wins.
+	 *   3) App base: /config/citomni_cli_commands.php
+	 *   4) Env overlay: /config/citomni_cli_commands.{ENV}.php
+	 * - Command map merge semantics are deep associative merge with last wins.
 	 *
 	 * Notes:
-	 * - Routes live in the dedicated route map, not inside CFG_CLI.
-	 * - The array shape must match the command routing contract used by CitOmni\Cli.
-	 * - Providers may contribute additional routes, while the app layer may
-	 *   override or replace vendor/provider routes by command key.
+	 * - Commands live in the dedicated command map, not inside CFG_CLI.
+	 * - The array shape must match the command dispatch contract used by CitOmni\Cli.
+	 * - Providers may contribute additional commands, while the app layer may
+	 *   override or replace vendor/provider commands by command key.
 	 * - Empty arrays are ignored during merge.
 	 */
 	public const COMMANDS_CLI = [
