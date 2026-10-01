@@ -52,8 +52,8 @@ declare(strict_types=1);
  *     or left empty and resolved by the ErrorHandler service.
  *
  * ENV & SECRETS:
- *   - It is okay to keep secrets here; OPcache holds PHP in memory.
- *   - Keep app-owned overrides small and deliberate. Providers own the baseline.
+ *   - Keep secrets in var/secrets/app.secret.<dev|stage|prod>.php and access them through $this->app->secrets.
+ *   - Keep non-secret runtime configuration and app-owned overrides small and deliberate. Providers own the baseline.
  *
  * NOTE:
  *   - This file is for application overrides, not for documenting every possible
