@@ -43,7 +43,7 @@ use CitOmni\Kernel\Service\BaseService;
  * - error_handler.log.path (string) - Directory for JSONL logs.
  * - error_handler.log.max_bytes (int, default 2_000_000) - Rotation threshold.
  * - error_handler.log.max_files (int, default 10) - Max rotated siblings to retain.
- * - error_handler.render.trigger (int bitmask, default 0) - Non-fatal PHP errors to show on stderr.
+ * - error_handler.render.trigger (int bitmask, default 0) - Non-fatal PHP errors to show on stderr (independent of log.trigger).
  * - error_handler.render.detail.level (int: 0|1) - 0=minimal, 1=traces (effective only in dev).
  * - error_handler.render.detail.trace.max_frames (int, default 120)
  * - error_handler.render.detail.trace.max_arg_strlen (int, default 512)
@@ -54,7 +54,11 @@ use CitOmni\Kernel\Service\BaseService;
  * Error handling:
  * - Fail-soft inside handlers: Never throw; unexpected failures go to PHP's error_log.
  * - Reentrancy guard prevents recursive handling.
- * - E_USER_ERROR is treated as fatal (shutdown path, same as HTTP).
+ * - Honors @-suppression and the active error_reporting() level, like the HTTP handler.
+ * - E_USER_ERROR is treated as fatal: it is handed back to PHP, which halts the process,
+ *   and handleShutdown() logs and renders it (same as HTTP).
+ * - Owns stderr: display_errors is forced off, and log_errors too when PHP has no
+ *   error_log destination (the CLI SAPI would otherwise print every fatal twice).
  *
  * Typical usage:
  *   // Cli\Kernel::boot() installs this when registered:
@@ -69,6 +73,12 @@ use CitOmni\Kernel\Service\BaseService;
  *   handler is treated as unrecoverable and terminates the process with exit(1).
  */
 final class ErrorHandler extends BaseService {
+
+	/** JSON flags for log records: invalid UTF-8 is substituted, never turned into null. */
+	private const JSON_FLAGS = \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_PARTIAL_OUTPUT_ON_ERROR | \JSON_INVALID_UTF8_SUBSTITUTE;
+
+	/** Maximum number of previous exceptions logged and rendered per uncaught exception. */
+	private const MAX_PREVIOUS = 5;
 
 	/** Frozen options: cfg.error_handler merged with ctor $options. */
 	private array $opt = [];
@@ -103,6 +113,13 @@ final class ErrorHandler extends BaseService {
 
 	/** Idempotency flag: Ensures install() runs only once. */
 	private bool $installed = false;
+
+	/**
+	 * Memory released first in handleShutdown(), so an "Allowed memory size exhausted"
+	 * fatal can still be logged and rendered. PHP enforces memory_limit again once
+	 * shutdown functions run, and a full heap would otherwise fail a second time.
+	 */
+	private static ?string $memoryReserve = null;
 
 
 
@@ -197,6 +214,10 @@ final class ErrorHandler extends BaseService {
 	 * - Registers exception, error, and shutdown handlers.
 	 * - Forces display_errors=0 to prevent PHP from writing to stdout
 	 *   (all error output goes to stderr through this handler).
+	 * - Forces log_errors=0 when error_log is empty. The CLI SAPI then writes PHP's own
+	 *   log lines to stderr, so every fatal would be printed twice. An explicit error_log
+	 *   destination (file or syslog) is left alone.
+	 * - Reserves 32 KiB that handleShutdown() releases before doing anything else.
 	 * - Idempotent: A second call is a no-op.
 	 *
 	 * Notes:
@@ -214,6 +235,14 @@ final class ErrorHandler extends BaseService {
 		}
 
 		@\ini_set('display_errors', '0');
+
+		// Without an error_log destination, PHP's own log lines go to stderr, which
+		// this handler already owns.
+		if ((string)\ini_get('error_log') === '') {
+			@\ini_set('log_errors', '0');
+		}
+
+		self::$memoryReserve ??= \str_repeat('x', 32 * 1024);
 
 		\set_exception_handler([$this, 'handleException']);
 		\set_error_handler([$this, 'handlePhpError']);
@@ -238,7 +267,7 @@ final class ErrorHandler extends BaseService {
 	 *
 	 * Behavior:
 	 * - Re-entrancy-safe via static guard.
-	 * - Logs a structured JSONL record with trace.
+	 * - Logs a structured JSONL record with code, trace, and the previous-exception chain.
 	 * - Outputs a human-readable summary to stderr.
 	 * - Terminates with exit(1).
 	 *
@@ -254,11 +283,13 @@ final class ErrorHandler extends BaseService {
 			$errorId = $this->newErrorId();
 
 			$rec = $this->baseRecord('exception', $errorId) + [
-				'class'   => $e::class,
-				'message' => $e->getMessage(),
-				'file'    => $e->getFile(),
-				'line'    => $e->getLine(),
-				'trace'   => $this->traceArray($e->getTrace(), $e->getFile(), $e->getLine()),
+				'class'    => $e::class,
+				'code'     => $e->getCode(),
+				'message'  => $e->getMessage(),
+				'file'     => $e->getFile(),
+				'line'     => $e->getLine(),
+				'trace'    => $this->traceArray($e->getTrace(), $e->getFile(), $e->getLine()),
+				'previous' => $this->previousChain($e),
 			];
 
 			$this->writeJsonl($this->logDir . '/cli_err_exception.jsonl', $rec);
@@ -274,40 +305,71 @@ final class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Handle non-fatal PHP errors (warnings/notices/etc.).
+	 * Handle non-fatal PHP errors (warnings, notices, deprecations).
 	 *
 	 * Behavior:
-	 * - Short-circuits for fatal-class errors (shutdown path).
-	 * - Logs when the log mask matches.
-	 * - Optionally renders to stderr when the render mask matches.
-	 * - Returns true to suppress PHP's internal handler.
+	 * - Ignores diagnostics that @ or error_reporting() suppress (returns false), so @
+	 *   keeps working and PHP still records them for error_get_last().
+	 * - Hands E_USER_ERROR back to PHP (returns false). PHP halts the process, and
+	 *   handleShutdown() logs and renders it.
+	 * - Logs when the level is in log.trigger and renders to stderr when it is in
+	 *   render.trigger. The two masks are independent.
+	 * - Returns false when neither mask matches, so PHP's internal handler decides.
+	 * - Otherwise returns true, which skips PHP's internal handler.
 	 *
-	 * @return bool  True to indicate the error was handled.
+	 * Notes:
+	 * - Prints error_id only when the error was logged, since the id refers to the log.
+	 * - Does not render while the exception handler is running, so its output stays
+	 *   intact; the error is still logged.
+	 *
+	 * @param  int     $errno    PHP error level.
+	 * @param  string  $errstr   Error message.
+	 * @param  string  $errfile  File where the error was raised.
+	 * @param  int     $errline  Line where the error was raised.
+	 * @return bool  True when handled here, false to let PHP handle it.
 	 */
 	public function handlePhpError(int $errno, string $errstr, string $errfile, int $errline): bool {
-		if ($this->isFatal($errno)) {
-			return true;
-		}
 
-		if (($errno & $this->logMask) === 0) {
-			// Not in our log mask: Let PHP's internal handler decide.
+		// Since PHP 8.0 the handler is still called for @-suppressed diagnostics, with a
+		// reduced error_reporting() mask. Returning false keeps @ working.
+		if ((\error_reporting() & $errno) === 0) {
 			return false;
 		}
 
-		$errorId = $this->newErrorId();
-		$rec = $this->baseRecord('php_error', $errorId) + [
-			'errno'   => $errno,
-			'message' => $errstr,
-			'file'    => $errfile,
-			'line'    => $errline,
-		];
-		$this->writeJsonl($this->logDir . '/cli_err_phperror.jsonl', $rec);
+		// E_USER_ERROR is the only fatal-class level that reaches a user error handler.
+		// Returning true would resume execution, and the error would never reach
+		// error_get_last(). Returning false lets PHP halt; handleShutdown() reports it.
+		if ($this->isFatal($errno)) {
+			return false;
+		}
 
-		if (($errno & $this->renderMask) !== 0) {
-			$label = $this->errorLevelLabel($errno);
+		$log    = ($errno & $this->logMask) !== 0;
+		$render = ($errno & $this->renderMask) !== 0 && !self::$inHandler;
+		if (!$log && !$render) {
+			return false;
+		}
+
+		$label   = $this->errorLevelLabel($errno);
+		$errorId = '';
+
+		if ($log) {
+			$errorId = $this->newErrorId();
+			$rec = $this->baseRecord('php_error', $errorId) + [
+				'errno'   => $errno,
+				'level'   => $label,
+				'message' => $errstr,
+				'file'    => $errfile,
+				'line'    => $errline,
+			];
+			$this->writeJsonl($this->logDir . '/cli_err_phperror.jsonl', $rec);
+		}
+
+		if ($render) {
 			$this->stderr("[{$label}] {$errstr}");
 			$this->stderr("  in {$errfile}:{$errline}");
-			$this->stderr("  error_id={$errorId}");
+			if ($errorId !== '') {
+				$this->stderr("  error_id={$errorId}");
+			}
 		}
 
 		return true;
@@ -318,6 +380,7 @@ final class ErrorHandler extends BaseService {
 	 * Shutdown handler: Detects fatal engine errors, logs, and terminates.
 	 *
 	 * Behavior:
+	 * - Releases the memory reserve first, so an out-of-memory fatal can be reported.
 	 * - Acts only on fatal-class errors (E_ERROR, E_PARSE, etc.).
 	 * - Writes a JSONL log entry and outputs to stderr.
 	 * - Terminates with exit(1).
@@ -325,6 +388,8 @@ final class ErrorHandler extends BaseService {
 	 * @return void
 	 */
 	public function handleShutdown(): void {
+		self::$memoryReserve = null;
+
 		$e = \error_get_last();
 		if ($e === null) {
 			return;
@@ -339,6 +404,7 @@ final class ErrorHandler extends BaseService {
 
 		$rec = $this->baseRecord('shutdown', $errorId) + [
 			'errno'   => $errno,
+			'level'   => $this->errorLevelLabel($errno),
 			'message' => (string)($e['message'] ?? ''),
 			'file'    => (string)($e['file'] ?? ''),
 			'line'    => (int)($e['line'] ?? 0),
@@ -371,9 +437,10 @@ final class ErrorHandler extends BaseService {
 	 * Render an exception to stderr with bounded output.
 	 *
 	 * Behavior:
-	 * - Always shows exception class, message, and throw site.
-	 * - In dev with detail enabled, also shows a formatted stack trace.
-	 * - Previous exceptions are chained with "Caused by:" prefix.
+	 * - Always shows the exception class, message, throw site, and error id.
+	 * - Always shows up to MAX_PREVIOUS previous exceptions as "Caused by:" entries.
+	 * - With developer details (dev only), also shows a bounded stack trace for the
+	 *   exception and for each previous exception.
 	 *
 	 * @param  \Throwable  $e        The exception to render.
 	 * @param  string      $errorId  Correlation id for this error event.
@@ -388,17 +455,18 @@ final class ErrorHandler extends BaseService {
 		if ($this->devDetail) {
 			$this->stderr('');
 			$this->renderTrace($e->getTrace(), $e->getFile(), $e->getLine());
+		}
 
-			// Chain previous exceptions
-			$prev = $e->getPrevious();
-			$depth = 0;
-			while ($prev !== null && $depth++ < 5) {
-				$this->stderr('');
-				$this->stderr('Caused by: [' . $prev::class . '] ' . $prev->getMessage());
-				$this->stderr('  in ' . $prev->getFile() . ':' . $prev->getLine());
+		$prev  = $e->getPrevious();
+		$depth = 0;
+		while ($prev !== null && $depth++ < self::MAX_PREVIOUS) {
+			$this->stderr('');
+			$this->stderr('Caused by: [' . $prev::class . '] ' . $prev->getMessage());
+			$this->stderr('  in ' . $prev->getFile() . ':' . $prev->getLine());
+			if ($this->devDetail) {
 				$this->renderTrace($prev->getTrace(), $prev->getFile(), $prev->getLine());
-				$prev = $prev->getPrevious();
 			}
+			$prev = $prev->getPrevious();
 		}
 
 		$this->stderr('');
@@ -451,6 +519,7 @@ final class ErrorHandler extends BaseService {
 	 *
 	 * Behavior:
 	 * - Encodes $record and appends under exclusive file lock.
+	 * - Invalid UTF-8 is replaced with U+FFFD instead of turning the value into null.
 	 * - Rotates when the next line would exceed $this->maxBytes.
 	 * - Never throws; failures go to PHP's error_log.
 	 *
@@ -478,10 +547,7 @@ final class ErrorHandler extends BaseService {
 				}
 			}
 
-			$encoded = \json_encode(
-				$record,
-				\JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_PARTIAL_OUTPUT_ON_ERROR
-			);
+			$encoded = \json_encode($record, self::JSON_FLAGS);
 			if ($encoded === false) {
 				$encoded = '{"encode_error":true}';
 			}
@@ -684,6 +750,27 @@ final class ErrorHandler extends BaseService {
 
 
 	/**
+	 * Summarize the previous-exception chain for a log record.
+	 *
+	 * @param  \Throwable  $e  The uncaught exception.
+	 * @return list<array{class: string, code: int|string, message: string, file: string, line: int}>  Up to MAX_PREVIOUS entries, outermost first.
+	 */
+	private function previousChain(\Throwable $e): array {
+		$chain = [];
+		for ($prev = $e->getPrevious(); $prev !== null && \count($chain) < self::MAX_PREVIOUS; $prev = $prev->getPrevious()) {
+			$chain[] = [
+				'class'   => $prev::class,
+				'code'    => $prev->getCode(),
+				'message' => $prev->getMessage(),
+				'file'    => $prev->getFile(),
+				'line'    => $prev->getLine(),
+			];
+		}
+		return $chain;
+	}
+
+
+	/**
 	 * Generate a new internal error id.
 	 *
 	 * @return string  e.g. "e_1a2b3c4d5e6f7a8b"
@@ -720,6 +807,9 @@ final class ErrorHandler extends BaseService {
 	 * Not intended for bitmasks (E_ALL, E_ALL & ~E_NOTICE, etc.) — PHP calls
 	 * error handlers with one level at a time, which is this method's scope.
 	 *
+	 * E_STRICT is not mapped: PHP no longer raises it, and since PHP 8.4 reading the
+	 * constant raises E_DEPRECATED, which would fire from inside the error handler.
+	 *
 	 * @param  int  $errno  Single PHP error-level constant.
 	 * @return string  Constant name or "E_UNKNOWN(N)" for unrecognized levels.
 	 */
@@ -736,7 +826,6 @@ final class ErrorHandler extends BaseService {
 			E_USER_ERROR        => 'E_USER_ERROR',
 			E_USER_WARNING      => 'E_USER_WARNING',
 			E_USER_NOTICE       => 'E_USER_NOTICE',
-			E_STRICT            => 'E_STRICT',
 			E_RECOVERABLE_ERROR => 'E_RECOVERABLE_ERROR',
 			E_DEPRECATED        => 'E_DEPRECATED',
 			E_USER_DEPRECATED   => 'E_USER_DEPRECATED',
@@ -865,7 +954,7 @@ final class ErrorHandler extends BaseService {
 				$items[] = $this->ellipsis;
 				break;
 			}
-			$items[] = \json_encode($k) . '=>' . $this->dumpArg($v, $depth);
+			$items[] = \json_encode($k, self::JSON_FLAGS) . '=>' . $this->dumpArg($v, $depth);
 		}
 
 		return '[' . \implode(', ', $items) . ']';

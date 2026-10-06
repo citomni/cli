@@ -28,16 +28,16 @@ declare(strict_types=1);
  *
  * Typical uses:
  *   - local debug helpers
- *   - unsafe cache reset commands
+ *   - destructive resets of local data
  *   - diagnostics you do not want on stage/prod
  */
 return [
 
 	// Example:
 	/*
-	'app:info' => [
-		'command'     => \App\Cli\Command\AppInfoCommand::class,
-		'description' => 'Dump app config, services, and command metadata for development.',
+	'dev:seed' => [
+		'command'     => \App\Cli\Command\SeedDevDataCommand::class,
+		'description' => 'Load local fixture data for development.',
 	],
 	*/
 

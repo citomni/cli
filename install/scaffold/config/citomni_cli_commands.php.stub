@@ -45,6 +45,10 @@ declare(strict_types=1);
  *     command name (e.g. 'cache:warm'), the later layer overrides the
  *     earlier one for that key only.
  *
+ *   - This includes the vendor commands. citomni/cli ships 'app:info',
+ *     'cache:warm', and 'cache:clear' in every environment. Defining one
+ *     of those keys in an app layer replaces the vendor command.
+ *
  *   - EMPTY ARRAYS ARE SKIPPED:
  *     If this file returns [], the app does NOT treat that as
  *     "wipe all commands". It simply means "no overrides from app base".
@@ -64,9 +68,9 @@ declare(strict_types=1);
  *       'auth:prune-expired-tokens'
  *
  * COMMAND DEFINITION SHAPE:
- *   'cache:warm' => [
- *       'command'     => \App\Cli\Command\CacheWarmCommand::class,
- *       'description' => 'Build and write config, dispatch, and service caches.',
+ *   'report:daily' => [
+ *       'command'     => \App\Cli\Command\DailyReportCommand::class,
+ *       'description' => 'Build and send the daily report.',
  *       'options'     => [], // optional, passed to the command constructor
  *   ],
  *
@@ -84,8 +88,7 @@ declare(strict_types=1);
  *       b) returns a non-empty array.
  *
  *     Typical examples:
- *       'app:info'             (dump cfg/services/commands in dev)
- *       'cache:clear-dev'      (nuke cache during local development)
+ *       'dev:seed'             (load local fixture data)
  *       'debug:test-mail'      (local-only smoke test command)
  *
  *     This avoids shipping development-only command overrides to stage/prod
@@ -97,19 +100,8 @@ return [
 	// Base app commands
 	// -----------------------------------------------------------------
 
-	/*
-	'cache:warm' => [
-		'command'     => \App\Cli\Command\CacheWarmCommand::class,
-		'description' => 'Build and write config, dispatch, and service caches.',
-	],
-	*/
-
-	/*
-	'cache:clear' => [
-		'command'     => \App\Cli\Command\CacheClearCommand::class,
-		'description' => 'Delete generated cache files.',
-	],
-	*/
+	// 'app:info', 'cache:warm', and 'cache:clear' come from citomni/cli.
+	// Do not register them here unless you mean to replace them.
 
 	/*
 	'auth:create-identity' => [
