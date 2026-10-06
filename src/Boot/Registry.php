@@ -148,6 +148,14 @@ final class Registry {
 			'command'     => \CitOmni\Cli\Command\AppInfoCommand::class,
 			'description' => 'Show application and runtime information.',
 		],
+		'cache:warm' => [
+			'command'     => \CitOmni\Cli\Command\CacheWarmCommand::class,
+			'description' => 'Build and write the compiled config, dispatch, and service caches.',
+		],
+		'cache:clear' => [
+			'command'     => \CitOmni\Cli\Command\CacheClearCommand::class,
+			'description' => 'Remove the compiled config, dispatch, and service caches.',
+		],
 	];
 
 }

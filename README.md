@@ -44,6 +44,7 @@ This package therefore occupies the same conceptual layer for CLI that `citomni/
 - Command dispatch from process arguments
 - Command-list rendering for discovery/help scenarios
 - CLI-specific error, exception, and fatal handling
+- `cache:warm` and `cache:clear` commands for the compiled CLI and HTTP caches
 
 ### Delivery-layer concerns
 
@@ -250,6 +251,89 @@ In a typical setup, the command runner is responsible for:
 * delegating command-specific parsing/validation to the command-side infrastructure in use
 
 This separation is deliberate. The runtime should know how to find and launch commands; it should not need intimate knowledge of every argument grammar in the ecosystem.
+
+---
+
+## Cache commands
+
+`citomni/cli` ships two commands for the compiled caches that `App` reads at boot. They wrap `App::warmCache()` and `App::clearCache()` from `citomni/kernel` and can act on the HTTP caches as well, so a deploy script does not need a web request for them.
+
+```bash
+php bin/citomni cache:warm  [--mode=all|cli|http] [--env=<env>] [--json]
+php bin/citomni cache:clear [--mode=all|cli|http] [--json]
+```
+
+* `--mode=cli` acts on `var/cache/cfg.cli.php`, `commands.cli.php`, and `services.cli.php` through the running CLI `App`.
+* `--mode=http` acts on `var/cache/cfg.http.php`, `routes.http.php`, and `services.http.php` through a second `App` constructed in `Mode::HTTP` from the same `/config` directory. It requires `citomni/http`; without it, the command exits with `1`.
+* `--mode=all` (default) does CLI first, then HTTP when `citomni/http` is installed. Otherwise HTTP is reported as `skipped (citomni/http is not installed)`.
+* `--env` (`cache:warm` only) selects the environment that is compiled into the cfg and dispatch caches. It is passed to `App::warmCache(env: ...)`; without it, `CITOMNI_ENVIRONMENT` applies. An empty value is a usage error.
+* `--json` (`-j`) prints one JSON object on stdout instead of the file list:
+
+```json
+{
+    "ok": true,
+    "env": "prod",
+    "modes": {
+        "cli": {
+            "cfg": "/var/www/example-app/var/cache/cfg.cli.php",
+            "dispatch": "/var/www/example-app/var/cache/commands.cli.php",
+            "services": "/var/www/example-app/var/cache/services.cli.php"
+        },
+        "http": "skipped"
+    }
+}
+```
+
+`cache:clear` prints the same shape without `env`, with `null` for a file that was not present.
+
+Exit codes are `0` on success, `1` on failure, and `2` on a usage error. `--mode=http` without `citomni/http` exits `1` and, with `--json`, prints `{"ok": false, "error": "...", "modes": {}}`. Any exception, such as a cache directory the CLI user cannot write to, is rendered on stderr by the CLI error handler and exits `1` without JSON. With `--mode=all`, a CLI cache warmed or cleared before an HTTP failure stays that way.
+
+### Deploy example
+
+Run it on the host and in the directory the app runs from, as the user that deploys:
+
+```bash
+cd /var/www/example-app
+composer install --no-dev --optimize-autoloader
+php bin/citomni cache:warm --env=prod
+sudo systemctl reload php8.5-fpm   # with opcache.validate_timestamps=0; see OPcache below
+```
+
+`cache:warm` replaces each file atomically, so it does not need a `cache:clear` first. Use `cache:clear` to go back to building from sources, for example while you change config on a server.
+
+### `--env=prod`
+
+`--env=prod` names the target environment explicitly. It matters when `bin/citomni` defines another `CITOMNI_ENVIRONMENT` than the one the cache is for. The cache is still built in the CLI process, and that has two consequences:
+
+* Cfg values computed from `CITOMNI_APP_PATH`, such as the log, session, template, and maintenance-flag paths in the HTTP baseline, are written into the cache as literal paths. Warm the cache on the host and at the path where the app runs.
+* In `dev`, `bin/citomni` does not define `CITOMNI_PUBLIC_ROOT_URL`, so an HTTP config file that references it fails fast while the HTTP `App` is built. When no HTTP cache exists yet, the `App` constructor first builds config for `CITOMNI_ENVIRONMENT`. A dev overlay that references the constant therefore fails even with `--env=prod`. The command has no workaround for this; run it from an entry point for the target environment.
+
+### OPcache
+
+`opcache_invalidate()` only reaches the OPcache of the PHP process that calls it. The commands invalidate the CLI's own OPcache, not the web server's (PHP-FPM, mod_php), and print a note on stderr whenever the HTTP caches are involved.
+
+With `opcache.validate_timestamps=0`, the web server keeps the compiled scripts it already has:
+
+* After `cache:warm`, reload PHP-FPM or the web server so it loads the new HTTP cache files. If you cannot reload, POST `/_system/reset-cache` and run `cache:warm` again.
+* After `cache:clear`, reload PHP-FPM or the web server, or POST `/_system/reset-cache`.
+
+Do not follow a CLI warm with `/_system/warmup-cache` alone. It rebuilds inside the web server from that server's compiled copies of the config sources, which are just as stale, and overwrites the files the CLI wrote.
+
+With timestamp validation enabled, the web server picks up the new files by itself within `opcache.revalidate_freq` seconds.
+
+### File ownership
+
+* The cache files are owned by the user that runs `bin/citomni` and written with mode `0644`. The web server user needs read access to them.
+* `var/cache` must be writable by that user. `cache:warm` writes a temporary file there and renames it into place, and `cache:clear` unlinks files there; both fail fast otherwise.
+* If you also use the `/_system/` cache webhooks, the web server user writes and removes the same files. Give both users write access to `var/cache`, for example through a shared group and a setgid directory.
+
+### While the cache is warm
+
+`App` prefers a cache file over the sources it was built from. While the cache is warm, changes to `/config` (cfg, routes, commands, services, `providers.php`) and to provider `Registry` constants have no effect until you run `cache:warm` again or `cache:clear`.
+
+That includes new commands: a `commands.cli.php` written before an upgrade hides commands the new version adds, these two included. After upgrading to the first `citomni/cli` version that ships them, delete `var/cache/commands.cli.php` once by hand.
+
+If a cache file cannot be loaded at all, for example because it references an enum case from a package that has since been removed, constructing an `App` for that mode fails. A broken CLI cache stops `bin/citomni` before any command runs, and a broken HTTP cache stops `--mode=http` and `--mode=all`. Delete the affected `var/cache/*.php` files by hand.
 
 ---
 

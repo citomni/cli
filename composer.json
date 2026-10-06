@@ -28,7 +28,7 @@
 	],
 	"require": {
 		"php": "^8.5",
-		"citomni/kernel": "^1.0"
+		"citomni/kernel": "^1.0.2.5"
 	},
 	"autoload": {
 		"psr-4": {
@@ -47,6 +47,7 @@
 	"suggest": {
 		"ext-json": "Faster JSON handling for CLI ErrorHandler JSONL logging",
 		"ext-opcache": "Better performance and cache invalidation",
+		"citomni/http": "Lets cache:warm and cache:clear handle the HTTP caches (--mode=http, and HTTP in --mode=all)",
 		"citomni/infrastructure": "Optional services used when present (log, txt/mail/db)"
 	},
 	"support": {
