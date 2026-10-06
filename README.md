@@ -1,142 +1,93 @@
 # CitOmni CLI
 
-Deterministic command-line runtime for CitOmni applications.
+Deterministic command-line boot, command dispatch, diagnostics, and cache management for CitOmni applications.
 
-`citomni/cli` is the dedicated CLI delivery layer in the CitOmni ecosystem. It provides the runtime boundary for command execution in the same architectural spirit as `citomni/http` provides the runtime boundary for web delivery: explicit boot, deterministic composition, minimal entrypoint code, and no framework magic disguised as convenience.
+`citomni/cli` gives an application one command-line entry point, `bin/citomni`. It boots the shared application core in CLI mode, applies runtime settings, installs CLI error handling, and dispatches a named command from an explicit command map.
 
-The package is intentionally narrow in scope. It owns the CLI runtime, its boot process, command dispatch, and CLI-specific failure rendering/logging. It does not attempt to absorb every command-related concern into itself. Shared abstractions and reusable command infrastructure may live in other CitOmni packages where that ownership is more appropriate.
-
-In practical terms, `citomni/cli` gives a CitOmni application a formal command-line execution model rather than a pile of ad-hoc PHP scripts wearing the ceremonial robes of a console framework.
+Commands use the same App, configuration, services, Operations, and Repositories as the rest of the application. CLI delivery adds argument parsing, terminal output, and exit codes around that shared application logic.
 
 ---
 
 ## Highlights
 
-- **Dedicated CLI runtime for CitOmni** with explicit kernel boot and command dispatch
-- **Deterministic composition model** aligned with the wider CitOmni architecture
-- **Minimal entrypoint philosophy** through a slim `bin/console` front controller
-- **Provider-aware boot pipeline** for CLI config and service-map contributions
-- **CLI-specific error handling** with controlled diagnostics and logging behavior
-- **No command scanning magic** beyond explicit package/application composition rules
-- **Shared architectural DNA with CitOmni HTTP** while remaining a proper CLI runtime in its own right
-- ♻️ **Low-overhead by design** - explicit boot, predictable resolution, and minimal runtime indirection
+- **Explicit boot** through `CitOmni\Cli\Kernel`.
+- **One command map** exposed as `$app->commands`, separate from configuration and HTTP routes.
+- **Provider and application composition** with deterministic override order.
+- **Typed arguments and options**, generated help, and output helpers through Kernel's `BaseCommand`.
+- **Grouped command listing** without constructing every command.
+- **Built-in application diagnostics** through `app:info`, including JSON output.
+- **CLI and HTTP cache management** through `cache:warm` and `cache:clear`.
+- **Independent CLI error handling** with stderr diagnostics, JSONL logs, and size-based rotation.
+- **Low runtime overhead** through compiled maps, lazy services, and direct command lookup.
 
 ---
 
 ## What this package is
 
-`citomni/cli` is the command-line mode of the CitOmni framework.
+`citomni/cli` is CitOmni's CLI delivery layer. It supports terminal commands, deployment scripts, scheduled jobs, imports, maintenance tasks, and other application work started through PHP CLI.
 
-It provides the application-facing runtime required to execute commands in a structured and deterministic way. That includes bootstrapping the application in CLI mode, resolving CLI-relevant config and services, locating registered commands, dispatching execution, and handling runtime failures in a way appropriate to terminal usage rather than HTTP delivery.
+A command is selected by its registered name. There is no directory scanning, attribute discovery, or dependency on HTTP routing.
 
-This package therefore occupies the same conceptual layer for CLI that `citomni/http` occupies for web requests. It is not merely a convenience script collection, and it is not a general-purpose shell framework bolted onto CitOmni after the fact.
+## What this package owns
 
----
-
-## What this package provides
-
-### CLI runtime responsibilities
-
-- CLI kernel boot and handoff
-- CLI-specific config assembly
-- CLI-specific service-map assembly
-- Command discovery from the composed application/runtime graph
-- Command dispatch from process arguments
-- Command-list rendering for discovery/help scenarios
-- CLI-specific error, exception, and fatal handling
-- `cache:warm` and `cache:clear` commands for the compiled CLI and HTTP caches
-
-### Delivery-layer concerns
-
-- Terminal-oriented execution flow
-- Exit-oriented runtime behavior
-- Developer-friendly diagnostics in development contexts
-- Safe, constrained failure output in non-development contexts
-- Logging hooks for operational visibility where configured
-
----
+- CLI kernel boot and process exit.
+- The `runner` and CLI `errorHandler` services.
+- The CLI baseline configuration, service map, and command registrations.
+- Dispatch from the process argument list to a command class.
+- Listing registered commands.
+- The `app:info`, `cache:warm`, and `cache:clear` command adapters.
+- Installation metadata and application scaffold files for CLI integration.
 
 ## What this package does not own
 
-`citomni/cli` is intentionally not a monolithic home for every command-related abstraction.
-
-It does **not** need to own:
-
-- Every reusable command base class
-- Every argv parsing helper in the ecosystem
-- Every command help formatter
-- Domain command logic itself
-- Shared orchestration used by both HTTP and CLI
-- Persistence logic
-- Application/domain services merely because they are invoked from commands
-
-Those concerns may live in other packages when that boundary is architecturally cleaner. A command-line runtime should not annex neighboring responsibilities simply because it happens to be holding the terminal.
+- **Shared application infrastructure.** `App`, `Cfg`, runtime configuration, composition, and compiled-cache mechanics belong to `citomni/kernel`.
+- **The command base and input grammar.** `BaseCommand`, `ArgvParser`, and `HelpFormatter` belong to `citomni/kernel`.
+- **Business workflows and persistence.** Application Operations own orchestration; Repositories own SQL and datastore IO.
+- **Scheduling and process supervision.** Cron, Windows Task Scheduler, or another external runner decides when to start a command and whether to restart it.
+- **HTTP delivery.** Requests, responses, sessions, and HTTP routing belong to `citomni/http` and the application's HTTP adapters.
 
 ---
 
-## Relationship to the wider CitOmni architecture
+## Relationship to other CitOmni packages
 
-CitOmni separates delivery layers from orchestration, persistence, and reusable services.
+| Package | Relationship |
+|---|---|
+| `citomni/kernel` | Required application core, command infrastructure, and cache implementation. |
+| `citomni/http` | Optional sibling delivery layer. Installing it enables the HTTP mode of the cache commands. |
+| `citomni/infrastructure` | Optional application services such as database access, logging, mail, and translation. Register the provider when those services are needed. |
+| Application and provider packages | Contribute configuration, services, and commands through explicit files and Registry constants. |
 
-Within that model:
-
-1. `citomni/kernel` provides the application core, config/service composition, and service resolution model.
-2. `citomni/http` provides HTTP delivery.
-3. `citomni/cli` provides CLI delivery.
-4. Shared/domain packages contribute services, config, routes, commands, and other package-owned capabilities through explicit boot metadata.
-5. The application composes the final runtime.
-
-`citomni/cli` therefore exists as a first-class delivery layer, not as an afterthought, and not as a thin wrapper around a generic command runner with ambitions above its station.
-
----
-
-## Runtime model
-
-The package follows the standard CitOmni principles:
-
-- explicit boot
-- deterministic composition
-- fail-fast behavior
-- minimal entrypoint code
-- no namespace scanning as a substitute for design
-
-At runtime, a typical CLI process looks conceptually like this:
-
-`bin/console` -> `Cli\Kernel::run()` -> `new App($configDir, Mode::CLI)` -> CLI config/services built from vendor baseline, providers, and app overrides -> CLI error handler installed -> command runner resolves and executes the requested command
-
-This keeps CLI execution aligned with the broader CitOmni boot model while respecting the very different operational semantics of a terminal process.
-
----
-
-## Deterministic composition
-
-Like the rest of CitOmni, `citomni/cli` favors explicit composition over hidden discovery.
-
-CLI config and services are assembled from defined sources in a deterministic order. The exact mechanics are intentionally parallel to the broader framework model: vendor baseline first, then provider contributions, then application-level overrides.
-
-This matters operationally. A command should not change behavior because a package happened to be scanned differently, nor because an autoloading side effect quietly altered registration order. Determinism is not academic polish here; it is a practical debugging advantage.
+The CLI error handler writes its own logs. It does not depend on the infrastructure `log` service.
 
 ---
 
 ## Requirements
 
-- PHP **8.2+**
-- `citomni/kernel`
+- PHP **8.5+** (`^8.5`).
+- `citomni/kernel` **^1.0.2.5**.
+- Composer autoloading.
+- A PHP CLI executable for running commands.
+- Filesystem permissions for any logs, caches, or application output the command writes.
 
-OPcache is strongly recommended in production-like environments where CLI workloads are frequent or operationally important.
+The CLI kernel does not require `ext-intl`. It applies the ICU locale when that extension is available; individual services may have additional requirements.
+
+OPcache is optional. CLI and web-server OPcache are separate operational concerns; see [Cache operations](#cache-operations).
 
 ---
 
 ## Installation
 
+Install the package in the application through Composer.
+
 ```bash
 composer require citomni/cli
-composer dump-autoload -o
-````
+```
 
-Register the package provider in your application configuration if your composition model requires it.
+Keep framework classes in Composer dependencies. The files under `install/scaffold/` are application entry-point, configuration, and starter-code templates.
 
-Your application's `composer.json` should also expose your own code through PSR-4 autoloading:
+`App` automatically uses `CitOmni\Cli\Boot\Registry` as its CLI baseline. You do **not** need to add this Registry to `config/providers.php` to obtain the built-in CLI services and commands. Use `providers.php` for additional providers required by your application.
+
+Expose application classes through PSR-4 autoloading. For an application using the `App\` namespace, merge this into its `composer.json`.
 
 ```json
 {
@@ -148,370 +99,678 @@ Your application's `composer.json` should also expose your own code through PSR-
 }
 ```
 
-Then refresh the autoloader:
+Refresh the autoloader after changing the application's autoload configuration.
 
 ```bash
 composer dump-autoload -o
 ```
 
+The package includes `install/manifest.php` for scaffold tooling. Composer installation alone does not create the application's `bin/citomni` or `/config` files. Existing applications can use their scaffold tooling or add the minimal files below.
+
 ---
 
 ## Quick start
 
-A minimal `bin/console` entrypoint typically looks like this:
+### Create the entry point
+
+Create the application's `bin/` and `config/` directories, then save this as `bin/citomni`.
 
 ```php
 <?php
 declare(strict_types=1);
 
-define('CITOMNI_ENVIRONMENT', 'dev');           // dev | stage | prod
-define('CITOMNI_APP_PATH', \dirname(__DIR__));
+define('CITOMNI_START_NS', hrtime(true));
+define('CITOMNI_ENVIRONMENT', 'dev');
+define('CITOMNI_APP_PATH', dirname(__DIR__));
 
 require CITOMNI_APP_PATH . '/vendor/autoload.php';
 
-\CitOmni\Cli\Kernel::run(__DIR__);
+\CitOmni\Cli\Kernel::run(
+	CITOMNI_APP_PATH . '/config',
+	$_SERVER['argv'] ?? [],
+);
 ```
 
-The point of this file is not to become clever. Its job is to hand execution to the CLI kernel and then get out of the way.
+The first argument is the application's configuration directory. The second is the full PHP argument list, including the script name and command name.
 
----
+Set `CITOMNI_ENVIRONMENT` deliberately for each deployment. The usual values are `dev`, `stage`, and `prod`.
 
-## Typical app layout
+### Set runtime configuration
 
-```text
-/app-root
-  /bin
-    citomni
-  /config
-    providers.php
-    services.php
-    citomni_cli_cfg.php
-    citomni_cli_cfg.dev.php
-    citomni_cli_cfg.stage.php
-    citomni_cli_cfg.prod.php
-    citomni_cli_commands.php
-    citomni_cli_commands.dev.php
-    citomni_cli_commands.stage.php
-    citomni_cli_commands.prod.php
-  /src
-    /Cli
-      /Command
-      /Exception
-    /Operation
-    /Repository
-    /Service
-    /Util
-  /var
-    /cache
-    /flags
-    /logs
-    /state
-  /vendor
-```
-
-The exact application structure can vary, but the important distinction remains: commands belong to the CLI-facing adapter layer; orchestration belongs elsewhere; persistence belongs in repositories.
-
----
-
-## Commands and architectural boundaries
-
-Commands are CLI adapters.
-
-That means they own terminal-facing concerns such as:
-
-* receiving process arguments
-* validating user input at the CLI boundary
-* formatting terminal output
-* choosing exit codes
-* delegating actual business workflows to operations/repositories/services as appropriate
-
-They should **not** become storage layers, mailers, HTTP simulators, or miniature god-objects with a text cursor.
-
-In normal CitOmni architecture terms:
-
-* **Commands** own CLI transport concerns
-* **Operations** own orchestration
-* **Repositories** own persistence
-* **Services** provide reusable runtime capabilities
-
-This is not merely a cleanliness preference. Command code remains easier to reason about, easier to test, and less likely to accumulate irreversible "just this once" terminal logic that metastasizes into application policy.
-
----
-
-## Command discovery and dispatch
-
-`citomni/cli` provides the runtime machinery needed to locate registered commands and dispatch them from argv input.
-
-In a typical setup, the command runner is responsible for:
-
-* receiving raw process arguments
-* resolving the intended command
-* showing grouped command lists when no command or an unknown command is supplied
-* invoking the matching command class
-* delegating command-specific parsing/validation to the command-side infrastructure in use
-
-This separation is deliberate. The runtime should know how to find and launch commands; it should not need intimate knowledge of every argument grammar in the ecosystem.
-
----
-
-## Cache commands
-
-`citomni/cli` ships two commands for the compiled caches that `App` reads at boot. They wrap `App::warmCache()` and `App::clearCache()` from `citomni/kernel` and can act on the HTTP caches as well, so a deploy script does not need a web request for them.
-
-```bash
-php bin/citomni cache:warm  [--mode=all|cli|http] [--env=<env>] [--json]
-php bin/citomni cache:clear [--mode=all|cli|http] [--json]
-```
-
-* `--mode=cli` acts on `var/cache/cfg.cli.php`, `commands.cli.php`, and `services.cli.php` through the running CLI `App`.
-* `--mode=http` acts on `var/cache/cfg.http.php`, `routes.http.php`, and `services.http.php` through a second `App` constructed in `Mode::HTTP` from the same `/config` directory. It requires `citomni/http`; without it, the command exits with `1`.
-* `--mode=all` (default) does CLI first, then HTTP when `citomni/http` is installed. Otherwise HTTP is reported as `skipped (citomni/http is not installed)`.
-* `--env` (`cache:warm` only) selects the environment that is compiled into the cfg and dispatch caches. It is passed to `App::warmCache(env: ...)`; without it, `CITOMNI_ENVIRONMENT` applies. An empty value is a usage error.
-* `--json` (`-j`) prints one JSON object on stdout instead of the file list:
-
-```json
-{
-    "ok": true,
-    "env": "prod",
-    "modes": {
-        "cli": {
-            "cfg": "/var/www/example-app/var/cache/cfg.cli.php",
-            "dispatch": "/var/www/example-app/var/cache/commands.cli.php",
-            "services": "/var/www/example-app/var/cache/services.cli.php"
-        },
-        "http": "skipped"
-    }
-}
-```
-
-`cache:clear` prints the same shape without `env`, with `null` for a file that was not present.
-
-Exit codes are `0` on success, `1` on failure, and `2` on a usage error. `--mode=http` without `citomni/http` exits `1` and, with `--json`, prints `{"ok": false, "error": "...", "modes": {}}`. Any exception, such as a cache directory the CLI user cannot write to, is rendered on stderr by the CLI error handler and exits `1` without JSON. With `--mode=all`, a CLI cache warmed or cleared before an HTTP failure stays that way.
-
-### Deploy example
-
-Run it on the host and in the directory the app runs from, as the user that deploys:
-
-```bash
-cd /var/www/example-app
-composer install --no-dev --optimize-autoloader
-php bin/citomni cache:warm --env=prod
-sudo systemctl reload php8.5-fpm   # with opcache.validate_timestamps=0; see OPcache below
-```
-
-`cache:warm` replaces each file atomically, so it does not need a `cache:clear` first. Use `cache:clear` to go back to building from sources, for example while you change config on a server.
-
-### `--env=prod`
-
-`--env=prod` names the target environment explicitly. It matters when `bin/citomni` defines another `CITOMNI_ENVIRONMENT` than the one the cache is for. The cache is still built in the CLI process, and that has two consequences:
-
-* Cfg values computed from `CITOMNI_APP_PATH`, such as the log, session, template, and maintenance-flag paths in the HTTP baseline, are written into the cache as literal paths. Warm the cache on the host and at the path where the app runs.
-* In `dev`, `bin/citomni` does not define `CITOMNI_PUBLIC_ROOT_URL`, so an HTTP config file that references it fails fast while the HTTP `App` is built. When no HTTP cache exists yet, the `App` constructor first builds config for `CITOMNI_ENVIRONMENT`. A dev overlay that references the constant therefore fails even with `--env=prod`. The command has no workaround for this; run it from an entry point for the target environment.
-
-### OPcache
-
-`opcache_invalidate()` only reaches the OPcache of the PHP process that calls it. The commands invalidate the CLI's own OPcache, not the web server's (PHP-FPM, mod_php), and print a note on stderr whenever the HTTP caches are involved.
-
-With `opcache.validate_timestamps=0`, the web server keeps the compiled scripts it already has:
-
-* After `cache:warm`, reload PHP-FPM or the web server so it loads the new HTTP cache files. If you cannot reload, POST `/_system/reset-cache` and run `cache:warm` again.
-* After `cache:clear`, reload PHP-FPM or the web server, or POST `/_system/reset-cache`.
-
-Do not follow a CLI warm with `/_system/warmup-cache` alone. It rebuilds inside the web server from that server's compiled copies of the config sources, which are just as stale, and overwrites the files the CLI wrote.
-
-With timestamp validation enabled, the web server picks up the new files by itself within `opcache.revalidate_freq` seconds.
-
-### File ownership
-
-* The cache files are owned by the user that runs `bin/citomni` and written with mode `0644`. The web server user needs read access to them.
-* `var/cache` must be writable by that user. `cache:warm` writes a temporary file there and renames it into place, and `cache:clear` unlinks files there; both fail fast otherwise.
-* If you also use the `/_system/` cache webhooks, the web server user writes and removes the same files. Give both users write access to `var/cache`, for example through a shared group and a setgid directory.
-
-### While the cache is warm
-
-`App` prefers a cache file over the sources it was built from. While the cache is warm, changes to `/config` (cfg, routes, commands, services, `providers.php`) and to provider `Registry` constants have no effect until you run `cache:warm` again or `cache:clear`.
-
-That includes new commands: a `commands.cli.php` written before an upgrade hides commands the new version adds, these two included. After upgrading to the first `citomni/cli` version that ships them, delete `var/cache/commands.cli.php` once by hand.
-
-If a cache file cannot be loaded at all, for example because it references an enum case from a package that has since been removed, constructing an `App` for that mode fails. A broken CLI cache stops `bin/citomni` before any command runs, and a broken HTTP cache stops `--mode=http` and `--mode=all`. Delete the affected `var/cache/*.php` files by hand.
-
----
-
-## Error handling
-
-CLI failure semantics differ from HTTP failure semantics, and `citomni/cli` treats them accordingly.
-
-The CLI error handler is responsible for handling:
-
-* uncaught exceptions
-* PHP errors promoted or surfaced during runtime
-* fatal shutdown scenarios where relevant
-
-In development contexts, richer diagnostic output may be rendered to support debugging. In non-development contexts, output should remain controlled, operationally sane, and suitable for logs or automated runners rather than theatrical terminal collapse.
-
-Fail-fast remains the governing principle. Recoverability should be explicit. Silent swallowing of runtime failures is not resilience; it is deferred confusion.
-
----
-
-## Configuration
-
-CLI configuration follows the same broad CitOmni model of explicit layered composition.
-
-Typical sources include:
-
-1. vendor CLI baseline
-2. provider CLI config contributions
-3. application CLI base config
-4. optional environment overlay for CLI mode
-
-This enables command runtimes to remain predictable across environments without collapsing environment concerns into command classes themselves.
-
-A minimal `config/citomni_cli_cfg.php` may look like:
+Save this as `config/citomni_cli_cfg.php`.
 
 ```php
 <?php
 declare(strict_types=1);
 
 return [
-	'identity' => [
-		'app_name' => 'My CitOmni App',
+	'locale' => [
+		'timezone' => 'Europe/Copenhagen',
+		'charset' => 'UTF-8',
+		'icu_locale' => 'da_DK',
 	],
-
-	// Add CLI-specific runtime settings here, such as error-handler
-	// options, logging paths, or package-specific CLI configuration.
 ];
 ```
 
-Environment-specific overlays can then refine operational details without contaminating the baseline.
+Without these overrides, `Runtime` uses `UTC`, `UTF-8`, and `en_US`. Configuration files may contain only the values the application needs to override.
+
+### Run the built-in commands
+
+From the application root, run the following commands.
+
+```bash
+php bin/citomni
+php bin/citomni list
+php bin/citomni app:info
+php bin/citomni app:info --help
+```
+
+An empty `config/` directory is sufficient for the built-in CLI baseline; the locale file above makes this example's runtime settings explicit. Existing common configuration and providers still participate in boot.
+
+The bare invocation and `list` both print the command list and return exit code `0`. An unknown command writes a diagnostic to stderr and returns `2`.
+
+These examples use `php bin/citomni`, which also works on Windows. Direct execution as `./bin/citomni` additionally requires an appropriate shebang and executable permissions.
 
 ---
 
-## Services
+## Boot and runtime API
 
-As with the rest of CitOmni, services are resolved through explicit service maps rather than runtime scanning.
+### Boot and exit
 
-That means:
+`Kernel::run()` is the normal entry point.
 
-* predictable resolution
-* clear ownership
-* cacheable composition
-* lower runtime overhead
-* fewer surprises when debugging boot behavior
+```php
+\CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $_SERVER['argv'] ?? []);
+```
 
-If your application or provider contributes CLI-relevant services, they should do so through the normal explicit registration mechanisms rather than magical discovery strategies that behave impressively until examined closely.
+It performs these steps in order.
+
+1. Constructs `App` with `Mode::CLI`.
+2. Loads configuration, commands, and services from compiled caches or their source layers.
+3. Applies timezone, charset, and available ICU locale settings through `Runtime::configure()`.
+4. Installs the `errorHandler` service when registered.
+5. Calls `$app->runner->run($argv)`.
+6. Terminates the process with the returned exit code.
+
+The method returns `never`. CLI boot does not start HTTP output buffering, resolve a public URL, configure trusted proxies, or apply the HTTP maintenance guard.
+
+### Boot without dispatch
+
+For scripts that need explicit control after boot, define the same constants and load Composer as in the entry-point example, then use `boot()`.
+
+```php
+$app = \CitOmni\Cli\Kernel::boot(CITOMNI_APP_PATH . '/config');
+
+$commands = $app->commands;
+$exitCode = $app->runner->run(['bin/citomni', 'app:info', '--json']);
+```
+
+`boot()` returns the configured `CitOmni\Kernel\App`. It still changes process-wide runtime settings and installs global error handlers.
+
+`Runner::run()` returns an integer without calling `exit()`. Uncaught exceptions remain subject to the installed global handler, which terminates the process.
+
+### Application state
+
+| Access | Meaning in CLI mode |
+|---|---|
+| `$app->cfg` | Read-only composed configuration. |
+| `$app->commands` | Read-only array containing the composed command map. |
+| `$app->routes` | Empty array. HTTP routes are not the CLI dispatch map. |
+| `$app->runner` | Lazily resolved command dispatcher. |
+| `$app->errorHandler` | CLI error handler, resolved and installed during normal CLI boot. |
+
+Commands are not stored in `$app->cfg` and are not service-map entries.
 
 ---
 
-## Providers
+## Writing a command
 
-Providers may contribute CLI-specific metadata through the standard CitOmni boot/registry pattern.
+Application commands normally live under `src/Cli/Command/` and extend `CitOmni\Kernel\Command\BaseCommand`.
 
-That can include:
+Create `src/Cli/Command/GreetCommand.php`.
 
-* CLI service-map entries
-* CLI config overlays
-* CLI command registrations where applicable
+```php
+<?php
+declare(strict_types=1);
 
-This allows packages to participate in the CLI runtime without requiring the CLI package itself to know package-specific details in advance.
+namespace App\Cli\Command;
 
-In other words, composition remains explicit, but it is not parochial.
+use CitOmni\Kernel\Command\BaseCommand;
+
+class GreetCommand extends BaseCommand {
+	/**
+	 * Declare the accepted command input.
+	 *
+	 * @return array<string, mixed> Command signature.
+	 */
+	protected function signature(): array {
+		return [
+			'arguments' => [
+				'name' => [
+					'description' => 'Name to greet',
+					'default' => 'World',
+				],
+			],
+			'options' => [
+				'repeat' => [
+					'short' => 'r',
+					'type' => 'int',
+					'default' => 1,
+					'description' => 'Number of greetings',
+				],
+			],
+		];
+	}
+
+	/**
+	 * Print the greeting after input parsing succeeds.
+	 *
+	 * @return int Command exit code.
+	 */
+	protected function execute(): int {
+		$name = $this->argString('name');
+		$repeat = $this->getInt('repeat');
+
+		if ($repeat < 1) {
+			$this->error('--repeat must be at least 1.');
+			return self::USAGE;
+		}
+
+		for ($i = 0; $i < $repeat; $i++) {
+			$this->stdout("Hello, {$name}!");
+		}
+
+		return self::SUCCESS;
+	}
+}
+```
+
+Register it in `config/citomni_cli_commands.php`.
+
+```php
+<?php
+declare(strict_types=1);
+
+return [
+	'app:greet' => [
+		'command' => \App\Cli\Command\GreetCommand::class,
+		'description' => 'Print a greeting.',
+	],
+];
+```
+
+Then run it.
+
+```bash
+php bin/citomni app:greet
+php bin/citomni app:greet Lars --repeat=3
+php bin/citomni app:greet Lars -r 2
+php bin/citomni app:greet --help
+```
+
+If the application has a compiled command cache, clear or rebuild it before running a newly registered command.
+
+The package's scaffold also includes a `HelloCommand` example. A class file alone does not register a command; add its entry to the application's command map if you use it.
+
+### Command responsibilities
+
+`signature()` declares input. `execute()` runs after parsing and validation succeed. The inherited `run()` method is final; command classes implement `execute()` rather than replacing the input pipeline.
+
+Commands own CLI input, output, and exit-code decisions. Delegate non-trivial business workflows to explicitly instantiated Operations, reusable tools to services, and persistence to Repositories. A command may call a Repository directly for trivial CRUD. SQL belongs in the Repository.
 
 ---
 
-## Operational philosophy
+## Command registration and dispatch
 
-`citomni/cli` is designed for systems that value:
+Each command-map entry uses this shape.
 
-* low runtime overhead
-* explicit architecture
-* repeatable behavior
-* production sanity
-* composable package boundaries
+```php
+return [
+	'app:greet' => [
+		'command' => \App\Cli\Command\GreetCommand::class,
+		'description' => 'Print a greeting.',
+		'options' => [],
+	],
+];
+```
 
-It is not trying to be a maximalist "developer experience" console framework where every ergonomic flourish is purchased with hidden indirection, runtime scanning, and enough implicit behavior to qualify as folklore.
+| Key | Contract |
+|---|---|
+| `command` | Required FQCN string. The class must exist and extend `BaseCommand`. |
+| `description` | Optional human-readable string used by the list and help output. |
+| `options` | Optional constructor configuration array, available as `$this->options` inside the command. |
 
-CitOmni's position is simpler: commands should run predictably, boot cheaply, fail clearly, and respect architectural boundaries.
+**Registration `options` and CLI options are separate.** Registration `options` supply application-owned constructor configuration. The `options` declared by `signature()` describe user input such as `--repeat=3`, read through `getInt()`, `getString()`, `getBool()`, or `opt()`.
 
-That is usually more useful than spectacle.
+Runner reads the command name from `$argv[1]`, performs an exact lookup, validates the selected definition, and constructs the command with the App, name, description, and registration options. It passes the full argument list to `BaseCommand::run()`.
+
+The name `list` is handled directly by Runner. Listing groups command names by the prefix before the first colon; names without a colon appear in `general`. Groups and names are sorted.
+
+### Command composition order
+
+Later layers override earlier values.
+
+1. `CitOmni\Cli\Boot\Registry::COMMANDS_CLI`.
+2. Each provider's `COMMANDS_CLI`, in `config/providers.php` order.
+3. `config/citomni_cli_commands.php`.
+4. `config/citomni_cli_commands.{ENV}.php`.
+
+Command definitions are merged recursively by associative key. For example, a later layer that changes only `description` retains an earlier `command` and its other fields. This differs from service-map replacement.
+
+A whole command-map layer returning `[]` contributes nothing; it does not clear inherited commands. Missing application command files are allowed.
+
+Use environment command files for commands or overrides specific to that environment. The compiled command cache must also correspond to the intended environment.
+
+### Provider commands
+
+A provider can expose a Registry such as this example.
+
+```php
+<?php
+declare(strict_types=1);
+
+namespace App\Boot;
+
+class Registry {
+	public const COMMANDS_CLI = [
+		'app:greet' => [
+			'command' => \App\Cli\Command\GreetCommand::class,
+			'description' => 'Print a greeting.',
+		],
+	];
+}
+```
+
+To use this provider example, add its class to `config/providers.php`.
+
+```php
+<?php
+declare(strict_types=1);
+
+return [
+	\App\Boot\Registry::class,
+];
+```
+
+Preserve any providers the application already registers. The application command file remains the shorter choice for commands used only by that application.
+
+---
+
+## Arguments, options, and help
+
+The shared Kernel parser interprets the tokens after the script name and command name.
+
+| Input definition | Supported fields |
+|---|---|
+| Positional argument | `description`, `required`, `default`, `type`. |
+| Named option | `description`, `short`, `required`, `default`, `type`, `allowed`. |
+
+Positional arguments support `string` and `int`. Options support `string`, `int`, and `bool`. The default type is `string`.
+
+- Argument order in `signature()` defines positional order. Required arguments precede optional arguments.
+- Missing optional strings and integers default to `null` unless a default is declared. Boolean options default to `false`.
+- An option's `allowed` array restricts its values using the declared PHP type, for example `['cli', 'http', 'all']` for a string option.
+- Unknown options, excess positional arguments, missing required input, and invalid typed values produce a usage error.
+- Developer mistakes in the signature are validated automatically in `dev`.
+
+### Accepted syntax
+
+The following forms apply to options actually declared by the selected command.
+
+| Form | Meaning |
+|---|---|
+| `--repeat=3` or `--repeat 3` | Long string/integer option. |
+| `-r 3`, `-r=3`, or `-r3` | Short string/integer option. |
+| `--flag` or its declared short name | Boolean option set to `true`. |
+| `--no-flag` | Boolean option set to `false`. |
+| `--` | Ends option parsing; remaining tokens are positional arguments. |
+| `--help` or `-h` | Generated help for the selected command. |
+
+Combined short flags such as `-vf` are unsupported. Repeated options use the last occurrence. `--help` and `-h` are reserved and are intercepted before normal input parsing, unless they occur after `--`.
+
+Options belong after the command name. For example, use `php bin/citomni app:info --help`.
+
+### Accessors
+
+| Method | Result |
+|---|---|
+| `arg($name, $default = null)` | Positional value, or fallback when the key is absent. |
+| `argString($name)` | Positional value as a string; throws if `null`. |
+| `argInt($name)` | Positional value as an integer; throws if `null`. |
+| `opt($name, $default = null)` | Option value, or fallback when the key is absent. |
+| `getString($name)` | Option value as a string; throws if `null`. |
+| `getInt($name)` | Option value as an integer; throws if `null`. |
+| `getBool($name)` | Option value as a boolean. |
+
+Declare defaults in `signature()`. A declared optional input can have an explicit `null` value in the parsed result, so the fallback argument to `arg()` or `opt()` does not replace that `null`.
+
+---
+
+## Output and exit codes
+
+`BaseCommand` provides these line-oriented output helpers.
+
+| Method | Stream | Formatting |
+|---|---|---|
+| `stdout($line)` | Stdout | Plain text with a trailing newline. |
+| `stderr($line)` | Stderr | Plain text with a trailing newline. |
+| `info($message)` | Stdout | Informational color when supported. |
+| `success($message)` | Stdout | Success color when supported. |
+| `warning($message)` | Stderr | Warning color when supported. |
+| `error($message)` | Stderr | Error color when supported. |
+
+Colors are enabled for terminal streams, or when `FORCE_COLOR` is set to a non-empty value other than `0`. Use `stdout()` for machine-readable payloads and reserve stderr for diagnostics.
+
+Output helpers do not choose an exit code or terminate execution. In particular, calling `error()` still requires returning an appropriate status.
+
+| Constant | Code | Meaning |
+|---|---|---|
+| `BaseCommand::SUCCESS` | `0` | Successful execution, listing, or help. |
+| `BaseCommand::FAILURE` | `1` | Runtime or operational failure. Uncaught exceptions and handled shutdown fatals also terminate with `1`. |
+| `BaseCommand::USAGE` | `2` | Invalid command-line input. Runner also returns `2` for an unknown command. |
+
+Parse errors print a diagnostic and usage text to stderr. Invalid command definitions and missing command classes throw exceptions rather than being treated as user input errors.
+
+---
+
+## Built-in commands
+
+| Command | Purpose |
+|---|---|
+| `list` | Runner's grouped command list. Also used when no command name is supplied. |
+| `app:info` | Application, runtime, configuration, and dispatch-map diagnostics. |
+| `cache:warm` | Rebuild compiled configuration, dispatch, and service caches. |
+| `cache:clear` | Remove those compiled caches. |
+
+### `app:info`
+
+```bash
+php bin/citomni app:info
+php bin/citomni app:info --json
+php bin/citomni app:info --env-configs --json
+```
+
+The command delegates inspection to Kernel's `Support\AppInfo`. Human-readable output includes application identity, runtime settings, memory and timing metrics, OPcache information, detected packages, active configuration, routes, and commands.
+
+| Option | Effect |
+|---|---|
+| `--json`, `-j` | Prints the complete AppInfo snapshot as JSON. |
+| `--env-configs` | Includes freshly built `dev`, `stage`, and `prod` configuration projections. |
+| `--raw` | Requests unredacted configuration values. |
+
+Configuration is secret-masked by default through AppInfo. `--raw` is intended for deliberate local diagnosis; its output can contain credentials. Review diagnostic output before sharing it.
+
+Environment projections evaluate configuration sources. They do not reboot the process in another environment or change `CITOMNI_ENVIRONMENT`.
+
+### `cache:warm` and `cache:clear`
+
+```bash
+php bin/citomni cache:warm --mode=cli
+php bin/citomni cache:warm --mode=all --env=prod --json
+php bin/citomni cache:clear --mode=cli
+php bin/citomni cache:clear --mode=http --json
+```
+
+| Option | Commands | Effect |
+|---|---|---|
+| `--mode=cli` | Both | Processes CLI caches through the running App. |
+| `--mode=http` | Both | Processes HTTP caches through a second App in HTTP mode. Requires `citomni/http`. |
+| `--mode=all` | Both | Default. Processes CLI first, then HTTP if installed; otherwise reports HTTP as skipped. |
+| `--env=prod` | `cache:warm` | Selects the configuration and command/route overlay environment to compile. Defaults to `CITOMNI_ENVIRONMENT`, or `prod` if undefined. |
+| `--json`, `-j` | Both | Emits one result object on stdout after successful processing. |
+
+An empty `--env` is a usage error. `--mode=http` without the HTTP package returns `1`. Clearing a cache file that is already absent is successful.
+
+A successful warm result with `--mode=all --json` in a CLI-only application has this shape.
+
+```json
+{
+	"ok": true,
+	"env": "prod",
+	"modes": {
+		"cli": {
+			"cfg": "/path/to/app/var/cache/cfg.cli.php",
+			"dispatch": "/path/to/app/var/cache/commands.cli.php",
+			"services": "/path/to/app/var/cache/services.cli.php"
+		},
+		"http": "skipped"
+	}
+}
+```
+
+A clear result omits `env` and uses `null` for each file that was absent. HTTP processing returns the same three path keys for HTTP files. When HTTP is processed, the commands also write an OPcache note to stderr.
+
+The explicit missing-HTTP-package failure produces an error object when `--json` is requested. Unexpected exceptions are handled by the global error handler on stderr and do **not** produce a JSON error object. Automation must check the exit code as well as stdout.
+
+---
+
+## Cache operations
+
+### Files and freshness
+
+Caches are stored below the application root.
+
+| Mode | Configuration | Dispatch | Services |
+|---|---|---|---|
+| CLI | `var/cache/cfg.cli.php` | `var/cache/commands.cli.php` | `var/cache/services.cli.php` |
+| HTTP | `var/cache/cfg.http.php` | `var/cache/routes.http.php` | `var/cache/services.http.php` |
+
+At boot, App prefers an available compiled array over its source layers. Rebuild or clear affected caches after changing configuration, provider registration, command definitions, service maps, or Registry constants.
+
+`cache:warm` rebuilds from sources and replaces each file through a temporary sibling and rename. A preliminary `cache:clear` is unnecessary. Replacement is atomic **per file**, not a transaction across all files or modes. An error can leave earlier cache files updated, and an HTTP failure after CLI processing does not undo CLI changes.
+
+`cache:clear` affects later boots. The running App retains the configuration and maps it already loaded.
+
+### Environments and paths
+
+Cache filenames are mode-specific, not environment-specific. Warming with `--env=prod` writes the same filenames a later `dev` boot would read. Use separate application deployments for simultaneously active environments.
+
+`--env` selects overlay files for cache generation; it does not redefine process constants or change the environment of the already running CLI App. Configuration code that branches on `CITOMNI_ENVIRONMENT` still sees the entry point's value.
+
+Warm caches on the target host and at the deployed application path. Absolute paths computed by configuration are written as literal values into the cache.
+
+For HTTP cache operations, the second App may need to evaluate HTTP configuration before warming or clearing. Any constants required by that configuration must already exist. CLI does not auto-detect `CITOMNI_PUBLIC_ROOT_URL`.
+
+The supplied entry-point scaffold defines a placeholder public URL outside `dev`. Replace it with the application's actual URL when shared configuration requires it. Define the correct URL explicitly in development as well if HTTP configuration needs it. Shared code may also require `CITOMNI_PUBLIC_PATH`.
+
+### Web-server OPcache
+
+CLI cache invalidation does not invalidate the web server's OPcache. With `opcache.validate_timestamps=0`, reload the relevant PHP-FPM service or web server after changing the HTTP cache files and deployed PHP sources.
+
+With timestamp validation enabled, pickup is subject to that web runtime's revalidation settings. Updating files on disk alone does not guarantee immediate use by every serving process.
+
+### Permissions and deployment
+
+The CLI user needs write access to `var/cache` and to the configured log location. Cache creation attempts file mode `0644`. When HTTP uses the generated files, the web-server user must be able to read them. If both CLI and HTTP tooling manage the same cache directory, both users need appropriate directory permissions.
+
+A deployment using a production entry point can warm both modes with the following commands, run from the deployed application root.
+
+```bash
+composer install --no-dev --optimize-autoloader
+php bin/citomni cache:warm --mode=all --env=prod
+```
+
+Check the exit status before completing the deployment, and handle web-server OPcache as described above.
+
+### Recovering from stale or broken caches
+
+If a new command is missing from `list`, an old `commands.cli.php` may still be hiding its registration. Rebuild or clear the CLI cache with a command that is available in the current map.
+
+If the cache commands themselves are missing, manually remove `var/cache/commands.cli.php` from the intended application deployment, then run the command again.
+
+A cache PHP file that throws during loading can prevent App construction before any command executes. Remove the affected compiled files from that mode's cache set, then correct any source configuration errors and warm again. Do not remove unrelated application data.
+
+---
+
+## Configuration and services
+
+The application uses separate files for configuration, service registration, and command registration.
+
+| File | Purpose |
+|---|---|
+| `config/providers.php` | Ordered list of additional provider Registry classes. |
+| `config/citomni_cfg.php` | Shared application configuration for HTTP and CLI. |
+| `config/citomni_cli_cfg.php` | CLI-specific application configuration. |
+| `config/citomni_cfg.{ENV}.php` | Shared environment configuration. |
+| `config/citomni_cli_cfg.{ENV}.php` | CLI-specific environment configuration. |
+| `config/services.php` | Shared application service map. |
+| `config/services_cli.php` | CLI-specific service map. |
+| `config/citomni_cli_commands.php` | Application command definitions. |
+| `config/citomni_cli_commands.{ENV}.php` | Environment-specific command definitions. |
+
+These application files are optional; files that exist must supply the expected configuration or map data. Shared files and providers must be suitable for both modes when used by both entry points.
+
+### Configuration precedence
+
+Configuration is composed in this order, with later values taking precedence.
+
+1. CLI Registry `CFG_CLI`.
+2. Each provider's `CFG_COMMON`, then its `CFG_CLI`, in provider-list order.
+3. `citomni_cfg.php`.
+4. `citomni_cli_cfg.php`.
+5. `citomni_cfg.{ENV}.php`.
+6. `citomni_cli_cfg.{ENV}.php`.
+
+Associative configuration is merged recursively. Use small application overrides instead of copying the entire provider baseline.
+
+Read composed configuration through `$this->app->cfg`. Direct access to a missing key throws; use `??` for an intentional default.
+
+```php
+$timezone = (string)($this->app->cfg->locale->timezone ?? 'UTC');
+```
+
+### Service precedence
+
+Service maps are composed in this order.
+
+1. CLI Registry `MAP_CLI`.
+2. Each provider's `MAP_COMMON`, then its `MAP_CLI`, in provider-list order.
+3. `services.php`.
+4. `services_cli.php`.
+
+Later definitions replace earlier definitions **as a whole per service ID**. Service options are not recursively merged across these layers.
+
+A service definition is either an FQCN string or an array containing `class` and optional `options`. Services are resolved lazily through `$app->{id}` and memoized per App. Use `$app->hasService('id')` when an integration is optional.
+
+There are no environment-specific `services_cli.{ENV}.php` files in this loading contract. Environment-specific configuration belongs in the configuration overlays.
+
+---
+
+## Error handling
+
+Normal CLI boot installs `CitOmni\Cli\Service\ErrorHandler` through the `errorHandler` service registration.
+
+It disables PHP's `display_errors` and registers exception, PHP error, and shutdown handlers. Uncaught exceptions and detected fatal shutdown errors are logged, rendered to stderr, and terminate with exit code `1`. Non-fatal PHP errors are not automatically converted into exceptions or failed command statuses.
+
+The handler is installed after App construction and runtime configuration. Errors before that point, including an entry-point parse error or a configuration failure during initial boot, cannot rely on this handler being available.
+
+### Configuration
+
+The baseline is under `error_handler`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `render.force_error_reporting` | `null` | Leaves PHP's current reporting mask unchanged; an integer sets it during installation. |
+| `render.trigger` | `0` | Non-fatal PHP error levels to render to stderr. |
+| `render.detail.level` | `0` | Enables detailed exception traces at `1` or higher, only in `dev`. |
+| `log.trigger` | `E_ALL` | Non-fatal PHP error levels handled by the logger. |
+| `log.path` | `''` | Empty resolves to `CITOMNI_APP_PATH . '/var/logs'`. |
+| `log.max_bytes` | `2_000_000` | Size-based rotation threshold. |
+| `log.max_files` | `10` | Rotated files retained per stream; `0` or less disables pruning. |
+
+These keys are relative to `error_handler`. A non-fatal level must be included in `log.trigger` for the handler to reach its optional rendering branch. Uncaught exceptions and shutdown fatals bypass these non-fatal masks.
+
+To enable development diagnostics, use `config/citomni_cli_cfg.dev.php`.
+
+```php
+<?php
+declare(strict_types=1);
+
+return [
+	'error_handler' => [
+		'render' => [
+			'trigger' => E_ALL,
+			'detail' => [
+				'level' => 1,
+			],
+		],
+	],
+];
+```
+
+Trace shaping is configured below `error_handler.render.detail.trace` with `max_frames` (`120`), `max_arg_strlen` (`512`), `max_array_items` (`20`), `max_depth` (`3`), and `ellipsis` (`'...'`). These bounds also shape logged exception traces.
+
+### Logs and sensitive values
+
+The handler uses three JSONL streams.
+
+| File | Contents |
+|---|---|
+| `cli_err_exception.jsonl` | Uncaught exceptions and bounded traces. |
+| `cli_err_phperror.jsonl` | Handled non-fatal PHP errors. |
+| `cli_err_shutdown.jsonl` | Detected fatal shutdown errors. |
+
+Records include timestamp, `error_id`, category, process arguments, current working directory, and process ID. The same `error_id` appears in the terminal diagnostic. Logging failures are reported through PHP's `error_log` as a fallback.
+
+**The CLI error handler does not redact the argument list.** Avoid passing passwords or tokens as command-line arguments. Use the application's established secret source. Exception messages and available trace arguments can also contain sensitive data, and compact production output still includes the exception message and file location.
+
+A long-running command must handle genuinely recoverable failures within its own workflow. An exception reaching the global handler terminates the process; the handler does not restart work or retry commands.
 
 ---
 
 ## Performance notes
 
-* Use optimized Composer autoloading in production:
-
-  ```json
-  {
-  	"config": {
-  		"optimize-autoloader": true,
-  		"classmap-authoritative": true,
-  		"apcu-autoloader": true
-  	}
-  }
-  ```
-
-* Then run:
-
-  ```bash
-  composer dump-autoload -o
-  ```
-
-* Keep vendor baselines lean
-
-* Prefer explicit service registration over dynamic discovery
-
-* Avoid putting domain orchestration directly into commands
-
-* Use OPcache in operational environments where CLI processes are frequent
-
-The package is aligned with the broader CitOmni preference for predictable low-cost execution rather than clever abstractions with a surprisingly healthy appetite for CPU cycles.
+- Use optimized Composer autoloading for deployed applications.
+- Warm configuration, command, and service caches when the deployment's inputs are stable.
+- Register commands explicitly. Runner performs a direct lookup and constructs only the selected command.
+- Keep command constructors and optional `init()` hooks lightweight. They run before command-specific help is handled.
+- Resolve optional services only when needed. Service registration does not eagerly construct every service.
+- Keep expensive work inside the selected command's execution path or the Operation it delegates to.
+- Verify the CLI runtime's OPcache configuration separately from the web runtime; installing OPcache alone does not establish how CLI processes use it.
 
 ---
 
-## Contributing
+## Package structure
 
-* PHP 8.2+
-* PSR-4
-* Tabs for indentation
-* K&R brace style
-* Keep delivery-layer boundaries sharp
-* Keep persistence in repositories
-* Keep orchestration out of command adapters unless the task is genuinely trivial
-* Avoid framework magic
-* Prefer explicit behavior over implicit convenience
+| Path | Responsibility |
+|---|---|
+| `src/Kernel.php` | CLI boot and exit-code propagation. |
+| `src/Boot/Registry.php` | CLI configuration, service, and command baselines. |
+| `src/Service/Runner.php` | Command lookup, validation, listing, and dispatch. |
+| `src/Service/ErrorHandler.php` | CLI diagnostics and independent JSONL error logging. |
+| `src/Command/AppInfoCommand.php` | CLI adapter for Kernel's AppInfo snapshot. |
+| `src/Command/CacheWarmCommand.php` | CLI adapter for cache generation. |
+| `src/Command/CacheClearCommand.php` | CLI adapter for cache removal. |
+| `install/manifest.php` | Scaffold targets, source files, and installation policies. |
+| `install/scaffold/` | Application entry-point, config, and starter-command templates. |
+
+`BaseCommand`, `ArgvParser`, `HelpFormatter`, `App`, and `Runtime` are supplied by `citomni/kernel`; they are not classes inside this package.
+
+The install manifest marks `bin/citomni` as managed and the supplied configuration and starter-code files as create-only. Check your scaffold tool's handling of those policies when updating an application.
 
 ---
 
 ## Coding & Documentation Conventions
 
-All CitOmni projects follow the shared conventions documented here:
-[CitOmni Coding & Documentation Conventions](https://github.com/citomni/docs/blob/main/contribute/CONVENTIONS.md)
+CitOmni uses PSR-1/PSR-4 naming, tabs, K&R braces, and English PHPDoc and comments. Keep commands as transport adapters, SQL in Repositories, and non-trivial shared orchestration in Operations. Prefer direct, deterministic code with low runtime overhead.
+
+See [CitOmni Coding & Documentation Conventions](https://github.com/citomni/docs/blob/main/contribute/CONVENTIONS.md). This package's PHP requirement is the one declared in its `composer.json` and the [Requirements](#requirements) above.
 
 ---
 
 ## License
 
-**CitOmni CLI** is open-source under the **MIT License**.
-See [LICENSE](LICENSE).
+**CitOmni CLI** is open-source under the **MIT License**. See [LICENSE](LICENSE).
 
-**Trademark notice:** "CitOmni" and the CitOmni logo are trademarks of **Lars Grove Mortensen**.
-You may not use the CitOmni name or logo to imply endorsement or affiliation without prior written permission.
-For details, see [NOTICE](NOTICE).
-
----
+Copyright (c) 2012-present CitOmni.
 
 ## Trademarks
 
-"CitOmni" and the CitOmni logo are trademarks of **Lars Grove Mortensen**.
-You may make factual references to "CitOmni", but do not modify the marks, create confusingly similar logos, or imply sponsorship, endorsement, or affiliation without prior written permission.
-Do not register or use "citomni" (or confusingly similar terms) in company names, domains, social handles, or top-level vendor/package names.
-For details, see [NOTICE](NOTICE).
-
----
+"CitOmni" and the CitOmni logo are trademarks of **Lars Grove Mortensen**. Factual references must not imply endorsement or affiliation. Name and logo use is governed by [NOTICE](NOTICE) and [TRADEMARKS.md](TRADEMARKS.md).
 
 ## Author
 
-Developed by Lars Grove Mortensen © 2012-present.
+Developed by Lars Grove Mortensen.
 
 ---
 
