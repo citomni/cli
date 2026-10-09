@@ -105,7 +105,7 @@ Refresh the autoloader after changing the application's autoload configuration.
 composer dump-autoload -o
 ```
 
-The package includes `install/manifest.php` for scaffold tooling. Composer installation alone does not create the application's `bin/citomni` or `/config` files. citomni/installer materializes `bin/citomni` per environment: the selected stub defines `CITOMNI_ENVIRONMENT`, and on stage and prod also `CITOMNI_PUBLIC_ROOT_URL` from the `STAGE_ROOT_URL` or `PROD_ROOT_URL` placeholder. Switch with `citomni-installer environment <dev|stage|prod>`. Existing applications can use their scaffold tooling or add the minimal files below.
+The package includes `install/manifest.php` for scaffold tooling. Composer installation alone does not create the application's `bin/citomni` or `/config` files. `citomni/installer` materializes `bin/citomni` per environment: The selected stub defines `CITOMNI_ENVIRONMENT`, and on stage and prod also `CITOMNI_PUBLIC_ROOT_URL` from the `STAGE_ROOT_URL` or `PROD_ROOT_URL` placeholder. Switch with `citomni-installer environment <dev|stage|prod>`. Existing applications can use their scaffold tooling or add the minimal files below.
 
 ---
 
