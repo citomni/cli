@@ -2,7 +2,7 @@
 
 Deterministic command-line boot, command dispatch, diagnostics, and cache management for CitOmni applications.
 
-`citomni/cli` gives an application one command-line entry point, `bin/citomni`. It boots the shared application core in CLI mode, applies runtime settings, installs CLI error handling, and dispatches a named command from an explicit command map.
+`citomni/cli` gives an application one command-line entry point, `bin/citomni`. It boots the shared application core in CLI mode, installs CLI error handling, applies runtime settings, and dispatches a named command from an explicit command map.
 
 Commands use the same App, configuration, services, Operations, and Repositories as the rest of the application. CLI delivery adds argument parsing, terminal output, and exit codes around that shared application logic.
 
@@ -105,7 +105,7 @@ Refresh the autoloader after changing the application's autoload configuration.
 composer dump-autoload -o
 ```
 
-The package includes `install/manifest.php` for scaffold tooling. Composer installation alone does not create the application's `bin/citomni` or `/config` files. Existing applications can use their scaffold tooling or add the minimal files below.
+The package includes `install/manifest.php` for scaffold tooling. Composer installation alone does not create the application's `bin/citomni` or `/config` files. citomni/installer materializes `bin/citomni` per environment: the selected stub defines `CITOMNI_ENVIRONMENT`, and on stage and prod also `CITOMNI_PUBLIC_ROOT_URL` from the `STAGE_ROOT_URL` or `PROD_ROOT_URL` placeholder. Switch with `citomni-installer environment <dev|stage|prod>`. Existing applications can use their scaffold tooling or add the minimal files below.
 
 ---
 
@@ -187,8 +187,8 @@ It performs these steps in order.
 
 1. Constructs `App` with `Mode::CLI`.
 2. Loads configuration, commands, and services from compiled caches or their source layers.
-3. Applies timezone, charset, and available ICU locale settings through `Runtime::configure()`.
-4. Installs the `errorHandler` service when registered.
+3. Installs the `errorHandler` service when registered.
+4. Applies timezone, charset, and available ICU locale settings through `Runtime::configure()`. Invalid values throw a `RuntimeException`, which the installed handler logs and renders before exiting with code `1`.
 5. Calls `$app->runner->run($argv)`.
 6. Terminates the process with the returned exit code.
 
@@ -662,7 +662,7 @@ Normal CLI boot installs `CitOmni\Cli\Service\ErrorHandler` through the `errorHa
 
 It disables PHP's `display_errors` and registers exception, PHP error, and shutdown handlers. Uncaught exceptions and detected fatal shutdown errors are logged, rendered to stderr, and terminate with exit code `1`. Non-fatal PHP errors are not automatically converted into exceptions or failed command statuses.
 
-The handler is installed after App construction and runtime configuration. Errors before that point, including an entry-point parse error or a configuration failure during initial boot, cannot rely on this handler being available.
+The handler is installed right after App construction, before runtime configuration, so invalid runtime settings such as an unknown `locale.timezone` are logged and rendered by it. Errors before installation, including an entry-point parse error or a failure while loading configuration, commands, or services, cannot rely on this handler being available.
 
 ### Configuration
 

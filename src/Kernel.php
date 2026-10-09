@@ -29,8 +29,8 @@ use CitOmni\Kernel\Runtime;
  * Boot pipeline:
  *   bin/citomni -> Cli\Kernel::run($configDir, $argv)
  *     -> boot($configDir) -> new App($configDir, Mode::CLI)
- *     -> Runtime::configure($app->cfg)  (timezone, charset, ICU best-effort)
  *     -> CLI error handler install (when available)
+ *     -> Runtime::configure($app->cfg)  (timezone, charset, ICU best-effort)
  *     -> $app->runner->run($argv)       (command dispatch)
  *
  * Differences from Http\Kernel:
@@ -61,30 +61,39 @@ final class Kernel {
 	/**
 	 * Boot the CLI application without dispatching.
 	 *
-	 * Constructs the App in CLI mode, applies shared runtime configuration
-	 * (timezone, charset, ICU locale), and installs the CLI error handler
-	 * when available. Returns the fully configured App instance.
+	 * Constructs the App in CLI mode, installs the CLI error handler when
+	 * registered, and applies shared runtime configuration (timezone, charset,
+	 * ICU locale). Returns the fully configured App instance.
 	 *
 	 * Behavior:
+	 * - The CLI error handler is installed before runtime configuration, in the
+	 *   same order as Http\Kernel. An uncaught exception from Runtime::configure()
+	 *   is therefore logged to cli_err_exception.jsonl, rendered to stderr, and
+	 *   ends the process with exit code 1.
+	 * - The handler is installed only when the errorHandler service is registered.
 	 * - Runtime::configure() sets timezone and charset (fail-fast on invalid
 	 *   values) and ICU locale (best-effort; skipped if intl is absent).
-	 * - The CLI error handler is installed only when the class exists. This
-	 *   allows the package to evolve incrementally: boot works without it,
-	 *   and the handler plugs in once implemented.
+	 *
+	 * Notes:
+	 * - Failures inside the App constructor (loading config, the command map, or
+	 *   the service map) happen before the handler exists and are left to PHP.
 	 *
 	 * @param  string  $configDir  Absolute path to the application's /config directory.
 	 * @return App  Fully configured application instance in CLI mode.
+	 * @throws \RuntimeException  On a missing config directory or invalid runtime configuration.
 	 */
 	public static function boot(string $configDir): App {
 		$app = new App($configDir, Mode::CLI);
 
-		// Shared runtime configuration (timezone, charset, ICU best-effort).
-		Runtime::configure($app->cfg);
-
-		// CLI error handler - installed when available.
+		// CLI error handler - installed first, so failures in the runtime
+		// configuration below are logged and rendered by it.
 		if ($app->hasService('errorHandler')) {
 			$app->errorHandler->install();
 		}
+
+		// Shared runtime configuration (timezone, charset, ICU best-effort).
+		// Throws \RuntimeException on invalid values.
+		Runtime::configure($app->cfg);
 
 		return $app;
 	}

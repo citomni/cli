@@ -15,13 +15,17 @@ declare(strict_types=1);
 
 return [
 	'package' => 'citomni/cli',
-	'version' => 1,
+	'version' => 2,
 	'files' => [
 		[
 			'target' => 'bin/citomni',
-			'source' => 'install/scaffold/bin/citomni.stub',
 			'type' => 'entrypoint',
 			'policy' => 'managed',
+			'environments' => [
+				'dev' => ['source' => 'install/scaffold/bin/citomni.dev.stub'],
+				'stage' => ['source' => 'install/scaffold/bin/citomni.stage.stub'],
+				'prod' => ['source' => 'install/scaffold/bin/citomni.prod.stub'],
+			],
 		],
 		[
 			'target' => 'config/citomni_cli_cfg.php',
