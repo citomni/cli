@@ -1,12 +1,16 @@
 <?php
 declare(strict_types=1);
 /*
- * SPDX-License-Identifier: MIT
- * Copyright (C) 2012-present Lars Grove Mortensen
+ * This file is part of the CitOmni framework.
+ * Low overhead, high performance, ready for anything.
  *
- * CitOmni CLI Skeleton - Minimal starter for high-performance CitOmni CLI apps.
- * Source:  https://github.com/citomni/cli-skeleton
- * License: See the LICENSE file for full terms.
+ * For more information, visit https://github.com/citomni
+ *
+ * Copyright (c) 2012-present Lars Grove Mortensen
+ * SPDX-License-Identifier: MIT
+ *
+ * For full copyright, trademark, and license information,
+ * please see the LICENSE file distributed with this source code.
  */
 
 /*
@@ -25,7 +29,6 @@ declare(strict_types=1);
  * MERGE MODEL (deterministic "last wins" per command key):
  *   1) Vendor baseline:
  *        \CitOmni\Cli\Boot\Registry::COMMANDS_CLI
- *        (if defined)
  *
  *   2) Provider commands:
  *        Each provider in /config/providers.php may define
@@ -41,13 +44,16 @@ declare(strict_types=1);
  *        ('dev' | 'stage' | 'prod')
  *
  * IMPORTANT:
- *   - "Last wins per key" means: if multiple layers define the same
+ *   - "Last wins" merges deeply. If several layers define the same
  *     command name (e.g. 'cache:warm'), the later layer overrides the
- *     earlier one for that key only.
+ *     fields it sets. Fields it leaves out keep the earlier value; set
+ *     them to null to clear them. Associative values such as 'options'
+ *     merge per key; lists are replaced as a whole.
  *
  *   - This includes the vendor commands. citomni/cli ships 'app:info',
- *     'cache:warm', and 'cache:clear' in every environment. Defining one
- *     of those keys in an app layer replaces the vendor command.
+ *     'cache:warm', and 'cache:clear' in every environment. An app layer
+ *     that defines one of those keys merges into the vendor definition;
+ *     set 'command' to replace the implementation.
  *
  *   - EMPTY ARRAYS ARE SKIPPED:
  *     If this file returns [], the app does NOT treat that as
@@ -77,7 +83,7 @@ declare(strict_types=1);
  * CONTRACT:
  *   - 'command' is required and must be a FQCN string.
  *   - The class must extend \CitOmni\Kernel\Command\BaseCommand.
- *   - 'description' is optional but recommended for Runner::listCommands().
+ *   - 'description' is optional but recommended; it is shown by `php bin/citomni list`.
  *   - 'options' is optional and must be an array when present.
  *
  * DEV-ONLY COMMANDS:

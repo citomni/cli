@@ -137,7 +137,7 @@ Set `CITOMNI_ENVIRONMENT` deliberately for each deployment. The usual values are
 
 ### Set runtime configuration
 
-Save this as `config/citomni_cli_cfg.php`.
+Save this as `config/citomni_cfg.php`. Locale settings are shared by HTTP and CLI, so they belong in the common configuration file.
 
 ```php
 <?php
@@ -152,7 +152,7 @@ return [
 ];
 ```
 
-Without these overrides, `Runtime` uses `UTC`, `UTF-8`, and `en_US`. Configuration files may contain only the values the application needs to override.
+Without these overrides, `Runtime` uses `UTC`, `UTF-8`, and `en_US`. Configuration files may contain only the values the application needs to override. Set `locale.*` in `config/citomni_cli_cfg.php` only when CLI must deliberately differ from the rest of the application; a value there shadows `config/citomni_cfg.php` in CLI mode.
 
 ### Run the built-in commands
 

@@ -1,12 +1,16 @@
 <?php
 declare(strict_types=1);
 /*
- * SPDX-License-Identifier: MIT
- * Copyright (C) 2012-present Lars Grove Mortensen
+ * This file is part of the CitOmni framework.
+ * Low overhead, high performance, ready for anything.
  *
- * CitOmni CLI - CLI-specific service map scaffold.
- * Source:  https://github.com/citomni/cli
- * License: See the LICENSE file for full terms.
+ * For more information, visit https://github.com/citomni
+ *
+ * Copyright (c) 2012-present Lars Grove Mortensen
+ * SPDX-License-Identifier: MIT
+ *
+ * For full copyright, trademark, and license information,
+ * please see the LICENSE file distributed with this source code.
  */
 
 /**
@@ -15,7 +19,7 @@ declare(strict_types=1);
  * Deterministic app-level CLI service wiring by id.
  *
  * This file is the app-owned CLI service map and has the highest
- * precedence for CLI commands when service ids collide.
+ * precedence in CLI mode when service ids collide.
  *
  * Contract:
  *   - This file is only loaded in CLI mode.
@@ -30,9 +34,13 @@ declare(strict_types=1);
  * Effective CLI precedence (services, left wins via PHP array union +):
  *   1) App CLI services: /config/services_cli.php
  *   2) App common services: /config/services.php
- *   3) Provider CLI services: MAP_CLI from registries listed in /config/providers.php
- *   4) Provider common services: MAP_COMMON from registries listed in /config/providers.php
- *   5) Vendor CLI baseline: MAP_CLI from citomni/cli
+ *   3) Provider #N MAP_CLI
+ *   4) Provider #N MAP_COMMON
+ *   5) Earlier provider service maps, same mode/common pattern
+ *   6) Vendor CLI baseline: MAP_CLI from citomni/cli
+ *
+ *   Providers are read in /config/providers.php order. Within one provider,
+ *   MAP_CLI wins over MAP_COMMON; a later provider wins over earlier ones.
  *
  * Policy:
  *   - Keep this file minimal.
