@@ -741,12 +741,12 @@ A long-running command must handle genuinely recoverable failures within its own
 | `src/Command/AppInfoCommand.php` | CLI adapter for Kernel's AppInfo snapshot. |
 | `src/Command/CacheWarmCommand.php` | CLI adapter for cache generation. |
 | `src/Command/CacheClearCommand.php` | CLI adapter for cache removal. |
-| `install/manifest.php` | Scaffold targets, source files, and installation policies. |
+| `install/manifest.php` | Scaffold targets, source files, installation policies, and runtime `.gitignore` rules. |
 | `install/scaffold/` | Application entry-point, config, and starter-command templates. |
 
 `BaseCommand`, `ArgvParser`, `HelpFormatter`, `App`, and `Runtime` are supplied by `citomni/kernel`; they are not classes inside this package.
 
-The install manifest marks `bin/citomni` as managed and the supplied configuration and starter-code files as create-only. Check your scaffold tool's handling of those policies when updating an application.
+The install manifest marks `bin/citomni` as managed and the supplied configuration and starter-code files as create-only. Check your scaffold tool's handling of those policies when updating an application. It also declares the contents of `var/logs/`, where the error handler writes, for the `.gitignore` block that `citomni/installer` maintains; the directory's `.gitkeep` stays versioned.
 
 ---
 

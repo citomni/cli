@@ -95,4 +95,8 @@ return [
 			'policy' => 'create-only',
 		],
 	],
+	'gitignore' => [
+		'/var/logs/*',
+		'!/var/logs/.gitkeep',
+	],
 ];
