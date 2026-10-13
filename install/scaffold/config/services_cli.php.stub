@@ -62,7 +62,7 @@ return [
 	| Example: CLI-only app service
 	|--------------------------------------------------------------------------
 	*/
-	// 'myCliService' => \App\Cli\Service\MyCliService::class,
+	// 'myCliService' => \App\Service\MyCliService::class,
 
 	/*
 	|--------------------------------------------------------------------------
@@ -70,7 +70,7 @@ return [
 	|--------------------------------------------------------------------------
 	*/
 	// 'myCliServiceWithOptions' => [
-	// 	'class' => \App\Cli\Service\MyCliService::class,
+	// 	'class' => \App\Service\MyCliService::class,
 	// 	'options' => [
 	// 		'example' => true,
 	// 	],
