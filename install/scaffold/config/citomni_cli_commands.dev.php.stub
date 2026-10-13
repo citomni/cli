@@ -45,9 +45,4 @@ return [
 	],
 	*/
 
-	'hello' => [
-		'command'     => \App\Cli\Command\HelloCommand::class,
-		'description' => 'Greet someone (smoke test)',
-	],
-
 ];

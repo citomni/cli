@@ -83,12 +83,6 @@ return [
 		],
 
 		[
-			'target' => 'src/Cli/Command/HelloCommand.php',
-			'source' => 'install/scaffold/src/Cli/Command/HelloCommand.php.stub',
-			'type' => 'starter-code',
-			'policy' => 'create-only',
-		],
-		[
 			'target' => 'src/Cli/Exception/.gitkeep',
 			'source' => 'install/scaffold/src/Cli/Exception/.gitkeep',
 			'type' => 'directory-placeholder',

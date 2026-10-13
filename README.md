@@ -83,7 +83,7 @@ Install the package in the application through Composer.
 composer require citomni/cli
 ```
 
-Keep framework classes in Composer dependencies. The files under `install/scaffold/` are application entry-point, configuration, and starter-code templates.
+Keep framework classes in Composer dependencies. The files under `install/scaffold/` are application entry-point and configuration templates.
 
 `App` automatically uses `CitOmni\Cli\Boot\Registry` as its CLI baseline. You do **not** need to add this Registry to `config/providers.php` to obtain the built-in CLI services and commands. Use `providers.php` for additional providers required by your application.
 
@@ -309,8 +309,6 @@ php bin/citomni app:greet --help
 ```
 
 If the application has a compiled command cache, clear or rebuild it before running a newly registered command.
-
-The package's scaffold also includes a `HelloCommand` example. A class file alone does not register a command; add its entry to the application's command map if you use it.
 
 ### Command responsibilities
 
@@ -742,11 +740,11 @@ A long-running command must handle genuinely recoverable failures within its own
 | `src/Command/CacheWarmCommand.php` | CLI adapter for cache generation. |
 | `src/Command/CacheClearCommand.php` | CLI adapter for cache removal. |
 | `install/manifest.php` | Scaffold targets, source files, installation policies, and runtime `.gitignore` rules. |
-| `install/scaffold/` | Application entry-point, config, and starter-command templates. |
+| `install/scaffold/` | Application entry-point and config templates. |
 
 `BaseCommand`, `ArgvParser`, `HelpFormatter`, `App`, and `Runtime` are supplied by `citomni/kernel`; they are not classes inside this package.
 
-The install manifest marks `bin/citomni` as managed and the supplied configuration and starter-code files as create-only. Check your scaffold tool's handling of those policies when updating an application. It also declares the contents of `var/logs/`, where the error handler writes, for the `.gitignore` block that `citomni/installer` maintains; the directory's `.gitkeep` stays versioned.
+The install manifest marks `bin/citomni` as managed and the supplied configuration files and directory placeholder as create-only. Check your scaffold tool's handling of those policies when updating an application. It also declares the contents of `var/logs/`, where the error handler writes, for the `.gitignore` block that `citomni/installer` maintains; the directory's `.gitkeep` stays versioned.
 
 ---
 
