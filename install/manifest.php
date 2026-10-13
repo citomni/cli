@@ -83,6 +83,12 @@ return [
 		],
 
 		[
+			'target' => 'src/Cli/Command/.gitkeep',
+			'source' => 'install/scaffold/src/Cli/Command/.gitkeep',
+			'type' => 'directory-placeholder',
+			'policy' => 'create-only',
+		],
+		[
 			'target' => 'src/Cli/Exception/.gitkeep',
 			'source' => 'install/scaffold/src/Cli/Exception/.gitkeep',
 			'type' => 'directory-placeholder',

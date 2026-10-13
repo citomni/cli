@@ -744,7 +744,7 @@ A long-running command must handle genuinely recoverable failures within its own
 
 `BaseCommand`, `ArgvParser`, `HelpFormatter`, `App`, and `Runtime` are supplied by `citomni/kernel`; they are not classes inside this package.
 
-The install manifest marks `bin/citomni` as managed and the supplied configuration files and directory placeholder as create-only. Check your scaffold tool's handling of those policies when updating an application. It also declares the contents of `var/logs/`, where the error handler writes, for the `.gitignore` block that `citomni/installer` maintains; the directory's `.gitkeep` stays versioned.
+The install manifest marks `bin/citomni` as managed and the supplied configuration files and directory placeholders as create-only. Check your scaffold tool's handling of those policies when updating an application. It also declares the contents of `var/logs/`, where the error handler writes, for the `.gitignore` block that `citomni/installer` maintains; the directory's `.gitkeep` stays versioned.
 
 ---
 
