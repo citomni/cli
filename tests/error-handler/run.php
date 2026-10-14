@@ -20,7 +20,7 @@ namespace CitOmni\Cli\Tests\ErrorHandler;
  *
  * The handler installs process-wide handlers, and many cases end the process,
  * so every case runs in a fresh `php -n` child process: probe.php, or oom.php
- * for the out-of-memory case. Each child gets its own temporary directory,
+ * for the out-of-memory cases. Each child gets its own temporary directory,
  * which is removed again afterwards.
  *
  * Usage:
@@ -45,6 +45,12 @@ const PARALLEL_WORKERS = 4;
 
 /** Records each worker writes; must match the "parallel" case in probe.php. */
 const PARALLEL_RECORDS = 100;
+
+/** Exit status PHP sets after a fatal error; the handler's shutdown function leaves it in place. */
+const FATAL_EXIT_STATUS = 255;
+
+/** Bytes of the command line a record keeps, plus the ellipsis marker after the cut. */
+const LOGGED_ARGV_BYTES = 4_096 + 3;
 
 
 /**
@@ -225,6 +231,39 @@ function fault(string $spec): array {
 
 
 /**
+ * Run oom.php: fill memory with strings of $bytes until PHP stops with an out-of-memory fatal.
+ *
+ * @param  int  $others     -1 for a log directory that does not exist yet; otherwise the shutdown
+ *                          log is due for rotation, next to $others files of other logs.
+ * @param  int  $argvBytes  Length of an argument oom.php appends to $_SERVER['argv']; 0 for none.
+ * @return array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}
+ */
+function oom(int $mib, int $bytes, int $others = -1, int $argvBytes = 0): array {
+	return runPhp([__DIR__ . '/oom.php', '{dir}/logs', (string)$mib, (string)$bytes, (string)$others, (string)$argvBytes], ['memory_limit' => $mib . 'M']);
+}
+
+
+/**
+ * Fail unless an out-of-memory run exited 255, reported the fatal on stderr and in the live shutdown
+ * log under one error id, and then ran the shutdown function registered after the handler.
+ *
+ * @return array<string, mixed>  The shutdown record.
+ */
+function assertOomReported(array $r, string $where): array {
+	same(FATAL_EXIT_STATUS, $r['exit'], 'exit code' . $where . describe($r));
+	$report = \strpos($r['stderr'], '[FATAL E_ERROR] Allowed memory size');
+	expect($report !== false, 'not rendered' . $where . describe($r));
+	$records = $r['logs']['cli_err_shutdown.jsonl'] ?? [];
+	$rec = $records[\array_key_last($records) ?? 0] ?? [];
+	same(\E_ERROR, $rec['errno'] ?? null, 'shutdown record errno' . $where);
+	same([$rec['error_id'] ?? null], errorIds($r['stderr']), 'error ids on stderr' . $where);
+	$later = \strpos($r['stderr'], '[later]');
+	expect($later !== false && $later > $report, 'the later shutdown function did not run after the report' . $where . describe($r));
+	return $rec;
+}
+
+
+/**
  * Rotations of cli_err_phperror.jsonl among $files.
  *
  * @param  list<string>  $files  File names, sorted.
@@ -311,7 +350,7 @@ $checks = [
 
 	'E_USER_ERROR halts the process and is reported once by the shutdown handler' => static function (): void {
 		$r = probe('user_error');
-		same(1, $r['exit'], 'exit code' . describe($r));
+		same(FATAL_EXIT_STATUS, $r['exit'], 'exit code' . describe($r));
 		expect(!\str_contains($r['stdout'], 'STILL RUNNING'), 'execution continued after E_USER_ERROR' . describe($r));
 		same(1, \substr_count($r['stderr'], '[FATAL E_USER_ERROR] boom'), 'fatal reports on stderr' . describe($r));
 		$rec = $r['logs']['cli_err_shutdown.jsonl'][0] ?? [];
@@ -374,14 +413,14 @@ $checks = [
 
 	'compile fatal is printed once when PHP has no error_log destination' => static function (): void {
 		$r = probe('compile', ['log_errors' => '1']);
-		same(1, $r['exit'], 'exit code' . describe($r));
+		same(FATAL_EXIT_STATUS, $r['exit'], 'exit code' . describe($r));
 		same('', $r['stdout'], 'stdout');
 		same(1, \substr_count($r['stderr'], 'Cannot redeclare'), 'reports on stderr' . describe($r));
 	},
 
 	'compile fatal still reaches an explicit error_log, and stderr shows it once' => static function (): void {
 		$r = probe('compile', ['log_errors' => '1', 'error_log' => '{dir}/php.log']);
-		same(1, $r['exit'], 'exit code' . describe($r));
+		same(FATAL_EXIT_STATUS, $r['exit'], 'exit code' . describe($r));
 		expect(\str_contains($r['phpLog'], 'PHP Fatal error:') && \str_contains($r['phpLog'], 'Cannot redeclare'), "PHP's error log lacks the fatal: " . squash($r['phpLog']));
 		same(1, \substr_count($r['stderr'], 'Cannot redeclare'), 'reports on stderr' . describe($r));
 	},
@@ -393,14 +432,55 @@ $checks = [
 		same([$rec['error_id'] ?? null], errorIds($r['stderr']), 'error ids on stderr');
 	},
 
-	'out-of-memory fatal on a full heap is still logged and rendered' => static function (): void {
-		foreach ([4, 16, 64] as $mib) {
-			$r     = runPhp([__DIR__ . '/oom.php', '{dir}/logs', (string)$mib], ['memory_limit' => $mib . 'M']);
-			$where = " (memory_limit={$mib}M)";
-			same(1, $r['exit'], 'exit code' . $where . describe($r));
-			expect(\str_contains($r['stderr'], '[FATAL E_ERROR] Allowed memory size'), 'not rendered' . $where . describe($r));
-			same(\E_ERROR, $r['logs']['cli_err_shutdown.jsonl'][0]['errno'] ?? null, 'shutdown record errno' . $where);
+	'a shutdown function registered after the handler still runs after a fatal error, after the report' => static function (): void {
+		foreach (['compile', 'user_error'] as $case) {
+			$r = probe($case);
+			$report = \strpos($r['stderr'], 'error_id=');
+			$later  = \strpos($r['stderr'], '[later]');
+			expect($report !== false && $later !== false && $later > $report, "{$case}: the later shutdown function did not run after the report" . describe($r));
 		}
+	},
+
+	'out-of-memory fatal on a full heap is reported and logged, and later shutdown functions still run' => static function (): void {
+		// Strings of one length fill one size class. 4000 bytes fill whole pages; 615, 1255 and
+		// 1767 bytes fill the classes whose fresh runs take 5, 5 and 7 pages.
+		foreach ([4, 16, 64] as $mib) {
+			foreach ([4_000, 615, 1_255, 1_767] as $bytes) {
+				assertOomReported(oom($mib, $bytes), " (memory_limit={$mib}M, {$bytes}-byte strings)");
+			}
+		}
+	},
+
+	'out-of-memory fatal is reported and logged when its record rotates a log among 1000 other files' => static function (): void {
+		foreach ([4, 16, 64] as $mib) {
+			foreach ([4_000, 615, 1_255, 1_767] as $bytes) {
+				$where = " (memory_limit={$mib}M, {$bytes}-byte strings)";
+				$r = oom($mib, $bytes, 1_000);
+				assertOomReported($r, $where);
+				same(1, \count($r['logs']['cli_err_shutdown.jsonl'] ?? []), 'records in the live file' . $where);
+				same(10, \count(\preg_grep('/^cli_err_shutdown\.\d{8}T.*\.jsonl$/', $r['files'])), 'rotations after pruning' . $where);
+				expect(!\in_array('cli_err_shutdown.20260101T120000.000000Z.jsonl', $r['files'], true), 'the oldest rotation was not pruned' . $where);
+				same(1_000, \count(\preg_grep('/^app_\d{4}\./', $r['files'])), 'files of other logs' . $where);
+			}
+		}
+	},
+
+	'out-of-memory fatal with a 100 KB command line is logged, with the command line cut' => static function (): void {
+		foreach ([4_000, 615, 1_255, 1_767] as $bytes) {
+			$where = " (memory_limit=16M, {$bytes}-byte strings)";
+			$argv = assertOomReported(oom(16, $bytes, -1, 100_000), $where)['argv'] ?? [];
+			same(LOGGED_ARGV_BYTES, \strlen(\implode('', $argv)), 'logged command line bytes' . $where);
+			expect(\str_ends_with((string)\end($argv), 'a...'), 'the cut argument does not end with the ellipsis' . $where);
+		}
+	},
+
+	'a record keeps at most 4096 bytes of the command line and marks the cut' => static function (): void {
+		$r = runPhp([__DIR__ . '/probe.php', 'long_argv', '{dir}/logs', 'dev', \str_repeat('a', 10_000)]);
+		$argv = $r['logs']['cli_err_phperror.jsonl'][0]['argv'] ?? null;
+		expect(\is_array($argv) && \count($argv) === 5, 'logged argv: ' . export($argv) . describe($r));
+		same('long_argv', $argv[1], 'argv[1]');
+		same(LOGGED_ARGV_BYTES, \strlen(\implode('', $argv)), 'logged command line bytes');
+		expect(\str_ends_with($argv[4], 'a...'), 'the cut argument does not end with the ellipsis');
 	},
 
 	'rotation keeps the newest record in the live file and prunes to max_files' => static function (): void {

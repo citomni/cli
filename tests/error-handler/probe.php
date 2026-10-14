@@ -26,12 +26,16 @@ use CitOmni\Cli\Service\ErrorHandler;
  * Usage (run.php builds the command line):
  *   php -n probe.php <case> <logDir> <env> [arg]
  *
- * <env> becomes CITOMNI_ENVIRONMENT. [arg] is the worker id for "parallel", and for "fault"
- * the operations to fail, joined with "+", then "@" and the number of records to seed.
+ * <env> becomes CITOMNI_ENVIRONMENT. [arg] is the worker id for "parallel", for "fault"
+ * the operations to fail, joined with "+", then "@" and the number of records to seed, and
+ * for "long_argv" any long string, which only makes the command line long.
  *
  * The "fault" case logs through faulty://logs (faults.php), with <logDir> as the real
  * directory behind it. The "retention" case seeds <logDir> with rotations of its own log and
  * other files, then logs one record that rotates the live log.
+ *
+ * The cases that end in a fatal error, "user_error" and "compile", register a shutdown
+ * function after install() that prints "[later]" on stderr.
  */
 
 if (\PHP_SAPI !== 'cli') {
@@ -110,6 +114,10 @@ $cases = [
 		\trigger_error('retention record', \E_USER_WARNING);
 	},
 
+	'long_argv' => static function (): void {
+		\trigger_error('long argv record', \E_USER_WARNING);
+	},
+
 	// Waits for run.php's start gate (<logDir>/../go), then writes 100 records
 	// (PARALLEL_RECORDS in run.php).
 	'parallel' => static function () use ($logDir, $arg): void {
@@ -136,6 +144,7 @@ $overrides = [
 	'rotation'    => ['log' => ['max_bytes' => 600, 'max_files' => 2], 'render' => ['trigger' => 0]],
 	'parallel'    => ['log' => ['max_bytes' => 4_096, 'max_files' => 0], 'render' => ['trigger' => 0]], // 0: keep every rotated file
 	'retention'   => ['log' => ['max_bytes' => 1_000, 'max_files' => 2], 'render' => ['trigger' => 0]],
+	'long_argv'   => ['render' => ['trigger' => 0]],
 ];
 
 if (!isset($cases[$case]) || $logDir === '') {
@@ -191,6 +200,12 @@ $options = \array_replace_recursive([
 $app = (object)['cfg' => new \stdClass()];
 
 (new ErrorHandler($app, $options))->install();
+
+if ($case === 'user_error' || $case === 'compile') {
+	\register_shutdown_function(static function (): void {
+		\fwrite(\STDERR, "[later]\n");
+	});
+}
 
 $cases[$case]();
 

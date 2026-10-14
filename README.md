@@ -658,7 +658,7 @@ There are no environment-specific `services_cli.{ENV}.php` files in this loading
 
 Normal CLI boot installs `CitOmni\Cli\Service\ErrorHandler` through the `errorHandler` service registration.
 
-It disables PHP's `display_errors` and registers exception, PHP error, and shutdown handlers. Uncaught exceptions and detected fatal shutdown errors are logged, rendered to stderr, and terminate with exit code `1`. Non-fatal PHP errors are not automatically converted into exceptions or failed command statuses.
+It disables PHP's `display_errors` and registers exception, PHP error, and shutdown handlers. An uncaught exception is logged, rendered to stderr, and terminates the process with exit code `1`. A fatal error, running out of memory included, is rendered to stderr and logged by the shutdown handler, which does not call `exit()`: shutdown functions registered later still run, and the process ends with PHP's exit status `255`. Log records keep at most 4096 bytes of the command line. Non-fatal PHP errors are not automatically converted into exceptions or failed command statuses.
 
 The handler is installed right after App construction, before runtime configuration, so invalid runtime settings such as an unknown `locale.timezone` are logged and rendered by it. Errors before installation, including an entry-point parse error or a failure while loading configuration, commands, or services, cannot rely on this handler being available.
 

@@ -28,13 +28,14 @@ use CitOmni\Kernel\Service\BaseService;
  * - Install process-wide exception, error, and shutdown handlers.
  * - Write structured JSONL logs with size-based rotation.
  * - Output human-readable error information to stderr.
- * - Terminate with exit code 1 on fatal errors and uncaught exceptions.
+ * - Terminate an uncaught exception with exit code 1. A fatal error is reported from the
+ *   shutdown handler without exit(), so PHP's exit status for it, 255, stands.
  *
  * Differences from Http\ErrorHandler:
  * - No HTTP response rendering, content negotiation, or output buffer management.
  * - No request correlation (X-Request-Id) - CLI has no inbound request.
  * - No templates - stderr output is plain text.
- * - Terminates with exit(1), not exit(0) - CLI convention for error.
+ * - Terminates an uncaught exception with exit(1), not exit(0) - CLI convention for error.
  * - Log files use cli_err_* prefix instead of http_err_*.
  * - Much simpler by design: CLI errors go to stderr, not to a client.
  *
@@ -71,6 +72,8 @@ use CitOmni\Kernel\Service\BaseService;
  * - Designed for request-scoped CLI processes (commands). Long-lived workers must
  *   catch exceptions in their own loop body; any exception that reaches the global
  *   handler is treated as unrecoverable and terminates the process with exit(1).
+ * - A log record keeps at most ARGV_MAX_BYTES of the command line, so the record of an
+ *   out-of-memory fatal stays within what MEMORY_RESERVE_BYTES can write.
  */
 final class ErrorHandler extends BaseService {
 
@@ -79,6 +82,12 @@ final class ErrorHandler extends BaseService {
 
 	/** Maximum number of previous exceptions logged and rendered per uncaught exception. */
 	private const MAX_PREVIOUS = 5;
+
+	/** Bytes install() reserves and handleShutdown() releases first, so an out-of-memory fatal leaves room to report it. */
+	private const MEMORY_RESERVE_BYTES = 65536;
+
+	/** Bytes of the command line a log record keeps; the rest is cut. */
+	private const ARGV_MAX_BYTES = 4096;
 
 	/** Frozen options: cfg.error_handler merged with ctor $options. */
 	private array $opt = [];
@@ -217,7 +226,7 @@ final class ErrorHandler extends BaseService {
 	 * - Forces log_errors=0 when error_log is empty. The CLI SAPI then writes PHP's own
 	 *   log lines to stderr, so every fatal would be printed twice. An explicit error_log
 	 *   destination (file or syslog) is left alone.
-	 * - Reserves 32 KiB that handleShutdown() releases before doing anything else.
+	 * - Reserves MEMORY_RESERVE_BYTES that handleShutdown() releases before doing anything else.
 	 * - Idempotent: A second call is a no-op.
 	 *
 	 * Notes:
@@ -242,7 +251,7 @@ final class ErrorHandler extends BaseService {
 			@\ini_set('log_errors', '0');
 		}
 
-		self::$memoryReserve ??= \str_repeat('x', 32 * 1024);
+		self::$memoryReserve ??= \str_repeat('x', self::MEMORY_RESERVE_BYTES);
 
 		\set_exception_handler([$this, 'handleException']);
 		\set_error_handler([$this, 'handlePhpError']);
@@ -377,13 +386,18 @@ final class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Shutdown handler: Detects fatal engine errors, logs, and terminates.
+	 * Shutdown handler: Reports a fatal engine error on stderr and in the log.
 	 *
 	 * Behavior:
 	 * - Releases the memory reserve first, so an out-of-memory fatal can be reported.
 	 * - Acts only on fatal-class errors (E_ERROR, E_PARSE, etc.).
-	 * - Writes a JSONL log entry and outputs to stderr.
-	 * - Terminates with exit(1).
+	 * - Writes the report to stderr before the JSONL record, so a log write that fails, for
+	 *   lack of memory or otherwise, leaves the report in place.
+	 * - Returns without exit(): Shutdown functions registered after this one still run.
+	 *
+	 * Notes:
+	 * - PHP ends the process with exit status 255 after a fatal error, unless a later shutdown
+	 *   function calls exit() with another status.
 	 *
 	 * @return void
 	 */
@@ -401,10 +415,18 @@ final class ErrorHandler extends BaseService {
 		}
 
 		$errorId = $this->newErrorId();
+		$label   = $this->errorLevelLabel($errno);
+
+		// stderr first: It needs little memory, and without an error_log destination it is the
+		// only report of the fatal error, because install() turned PHP's own off.
+		$this->stderr('');
+		$this->stderr("[FATAL {$label}] " . (string)($e['message'] ?? 'Unknown fatal error'));
+		$this->stderr("  in " . (string)($e['file'] ?? '?') . ':' . (int)($e['line'] ?? 0));
+		$this->stderr("  error_id={$errorId}");
 
 		$rec = $this->baseRecord('shutdown', $errorId) + [
 			'errno'   => $errno,
-			'level'   => $this->errorLevelLabel($errno),
+			'level'   => $label,
 			'message' => (string)($e['message'] ?? ''),
 			'file'    => (string)($e['file'] ?? ''),
 			'line'    => (int)($e['line'] ?? 0),
@@ -412,13 +434,8 @@ final class ErrorHandler extends BaseService {
 
 		$this->writeJsonl($this->logDir . '/cli_err_shutdown.jsonl', $rec);
 
-		$label = $this->errorLevelLabel($errno);
-		$this->stderr('');
-		$this->stderr("[FATAL {$label}] " . (string)($e['message'] ?? 'Unknown fatal error'));
-		$this->stderr("  in " . (string)($e['file'] ?? '?') . ':' . (int)($e['line'] ?? 0));
-		$this->stderr("  error_id={$errorId}");
-
-		exit(1);
+		// No exit(): exit() in a shutdown function cancels every shutdown function registered
+		// after this one.
 	}
 
 
@@ -740,6 +757,10 @@ final class ErrorHandler extends BaseService {
 	 * - Keeps the $max newest by the timestamp in their names and deletes the rest; a failed
 	 *   deletion is ignored.
 	 *
+	 * Notes:
+	 * - Reads the directory one entry at a time and holds only this log's rotations, so its
+	 *   memory does not grow with the other files in the directory.
+	 *
 	 * @param  string  $file  Base live JSONL path.
 	 * @param  int     $max   Maximum rotated files to keep (0 disables pruning).
 	 * @return void
@@ -755,14 +776,23 @@ final class ErrorHandler extends BaseService {
 		$base = ($dot === false) ? $name : \substr($name, 0, $dot);
 		$ext  = ($dot === false) ? '' : \substr($name, $dot);
 
-		// A directory listing instead of glob(): The directory path may contain glob syntax.
-		$entries = @\scandir($dir, \SCANDIR_SORT_NONE);
-		if ($entries === false) {
+		$pattern = '~\A' . \preg_quote($base, '~') . '\.\d{8}T\d{6}(?:\.\d{6})?Z(?:-[0-9a-f]{4})?' . \preg_quote($ext, '~') . '\z~';
+
+		// Entry by entry: A full listing costs memory for every file in the directory, and
+		// handleShutdown() may be running on the memory reserve. Not glob(): The directory
+		// path may contain glob syntax.
+		$dh = @\opendir($dir);
+		if ($dh === false) {
 			return;
 		}
+		$rotations = [];
+		while (($entry = \readdir($dh)) !== false) {
+			if (\preg_match($pattern, $entry) === 1) {
+				$rotations[] = $entry;
+			}
+		}
+		\closedir($dh);
 
-		$pattern   = '~\A' . \preg_quote($base, '~') . '\.\d{8}T\d{6}(?:\.\d{6})?Z(?:-[0-9a-f]{4})?' . \preg_quote($ext, '~') . '\z~';
-		$rotations = \preg_grep($pattern, $entries);
 		if (\count($rotations) <= $max) {
 			return;
 		}
@@ -819,6 +849,7 @@ final class ErrorHandler extends BaseService {
 	 * @param  string  $type     Category: 'exception'|'shutdown'|'php_error'.
 	 * @param  string  $errorId  Correlation id for this error event.
 	 * @return array<string, mixed>
+	 * @see \CitOmni\Cli\Service\ErrorHandler::argvForRecord()  How the command line is cut.
 	 */
 	private function baseRecord(string $type, string $errorId): array {
 		return [
@@ -826,10 +857,44 @@ final class ErrorHandler extends BaseService {
 			'error_id' => $errorId,
 			'type'     => $type,
 			'mode'     => 'cli',
-			'argv'     => $_SERVER['argv'] ?? [],
+			'argv'     => $this->argvForRecord(),
 			'cwd'      => @\getcwd() ?: '',
 			'pid'      => \getmypid() ?: 0,
 		];
+	}
+
+
+	/**
+	 * Return the command line for a log record, cut to ARGV_MAX_BYTES.
+	 *
+	 * Behavior:
+	 * - Keeps the arguments in order while their total length fits ARGV_MAX_BYTES.
+	 * - Cuts the first argument that does not fit, ends it with the ellipsis marker and leaves
+	 *   out the arguments after it.
+	 * - An argument that is not a string, which only code that rewrote $_SERVER['argv'] can
+	 *   cause, is logged as its type.
+	 *
+	 * @return list<string>  Empty when $_SERVER['argv'] is not an array.
+	 */
+	private function argvForRecord(): array {
+		$argv = $_SERVER['argv'] ?? [];
+		if (!\is_array($argv)) {
+			return [];
+		}
+
+		$out  = [];
+		$left = self::ARGV_MAX_BYTES;
+		foreach ($argv as $arg) {
+			$arg = \is_string($arg) ? $arg : \get_debug_type($arg);
+			if (\strlen($arg) > $left) {
+				$out[] = \substr($arg, 0, $left) . $this->ellipsis;
+				break;
+			}
+			$out[] = $arg;
+			$left -= \strlen($arg);
+		}
+
+		return $out;
 	}
 
 
