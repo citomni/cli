@@ -26,7 +26,12 @@ use CitOmni\Cli\Service\ErrorHandler;
  * Usage (run.php builds the command line):
  *   php -n probe.php <case> <logDir> <env> [arg]
  *
- * <env> becomes CITOMNI_ENVIRONMENT. [arg] is the worker id for "parallel".
+ * <env> becomes CITOMNI_ENVIRONMENT. [arg] is the worker id for "parallel", and for "fault"
+ * the operations to fail, joined with "+", then "@" and the number of records to seed.
+ *
+ * The "fault" case logs through faulty://logs (faults.php), with <logDir> as the real
+ * directory behind it. The "retention" case seeds <logDir> with rotations of its own log and
+ * other files, then logs one record that rotates the live log.
  */
 
 if (\PHP_SAPI !== 'cli') {
@@ -97,6 +102,14 @@ $cases = [
 		}
 	},
 
+	'fault' => static function (): void {
+		\trigger_error('fault record', \E_USER_WARNING);
+	},
+
+	'retention' => static function (): void {
+		\trigger_error('retention record', \E_USER_WARNING);
+	},
+
 	// Waits for run.php's start gate (<logDir>/../go), then writes 100 records
 	// (PARALLEL_RECORDS in run.php).
 	'parallel' => static function () use ($logDir, $arg): void {
@@ -122,6 +135,7 @@ $overrides = [
 	'neither'     => ['log' => ['trigger' => \E_ALL & ~\E_USER_NOTICE], 'render' => ['trigger' => \E_ALL & ~\E_USER_NOTICE]],
 	'rotation'    => ['log' => ['max_bytes' => 600, 'max_files' => 2], 'render' => ['trigger' => 0]],
 	'parallel'    => ['log' => ['max_bytes' => 4_096, 'max_files' => 0], 'render' => ['trigger' => 0]], // 0: keep every rotated file
+	'retention'   => ['log' => ['max_bytes' => 1_000, 'max_files' => 2], 'render' => ['trigger' => 0]],
 ];
 
 if (!isset($cases[$case]) || $logDir === '') {
@@ -132,7 +146,41 @@ if (!isset($cases[$case]) || $logDir === '') {
 \define('CITOMNI_ENVIRONMENT', $env);
 
 require __DIR__ . '/doubles.php';
+require __DIR__ . '/faults.php';
 require __DIR__ . '/../../src/Service/ErrorHandler.php';
+
+/** $count valid JSONL records of about 200 bytes each. */
+function seedLines(int $count): string {
+	$out = '';
+	for ($i = 1; $i <= $count; $i++) {
+		$out .= \json_encode(['seed' => $i, 'pad' => \str_repeat('s', 180)]) . "\n";
+	}
+	return $out;
+}
+
+if ($case === 'fault') {
+	// "<fault>+<fault>@<records>": Ten records rotate at 1000 bytes, fewer are appended to.
+	[$faults, $records] = \explode('@', $arg, 2) + ['', '0'];
+	\mkdir($logDir);
+	\file_put_contents($logDir . '/cli_err_phperror.jsonl', seedLines((int)$records));
+	FaultWrapper::$root = $logDir;
+	FaultWrapper::$faults = \explode('+', $faults);
+	\stream_wrapper_register('faulty', FaultWrapper::class);
+	$overrides['fault'] = ['log' => ['path' => FaultWrapper::DIR, 'max_bytes' => ((int)$records >= 10) ? 1_000 : 2_000_000], 'render' => ['trigger' => 0]];
+}
+
+if ($case === 'retention') {
+	// Five rotations of the live log, files that only look like rotations, and another log's
+	// rotation; the oldest mtimes go to the files that are not rotations of this log.
+	\mkdir($logDir);
+	foreach ([1, 2, 3, 4, 5] as $day) {
+		\touch($logDir . "/cli_err_phperror.2026010{$day}T120000.000000Z.jsonl", 1_760_000_000 + $day);
+	}
+	foreach (['cli_err_phperror.backup.jsonl', 'cli_err_phperror.jsonl.lock', 'cli_err_phperror.20260109T120000.000000Z.jsonl.tmp', 'cli_err_exception.20260101T120000.000000Z.jsonl'] as $name) {
+		\touch($logDir . '/' . $name, 1_700_000_000);
+	}
+	\file_put_contents($logDir . '/cli_err_phperror.jsonl', seedLines(10));
+}
 
 $options = \array_replace_recursive([
 	'log'    => ['path' => $logDir, 'trigger' => \E_ALL],

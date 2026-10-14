@@ -521,7 +521,13 @@ final class ErrorHandler extends BaseService {
 	 * - Encodes $record and appends under exclusive file lock.
 	 * - Invalid UTF-8 is replaced with U+FFFD instead of turning the value into null.
 	 * - Rotates when the next line would exceed $this->maxBytes.
-	 * - Never throws; failures go to PHP's error_log.
+	 * - Cuts off a line the file took only in part, so the next record does not continue it.
+	 * - Never throws; a failure goes to PHP's error_log, naming the file and, where PHP gave
+	 *   one, the cause.
+	 *
+	 * Notes:
+	 * - Where the lock cannot be taken, the line is still appended, but a partial line stays:
+	 *   Cutting it off could cut another writer's record.
 	 *
 	 * @param  string                $file    Absolute path to the live JSONL file.
 	 * @param  array<string, mixed>  $record  Event payload to encode and append.
@@ -542,7 +548,7 @@ final class ErrorHandler extends BaseService {
 			if (!\is_dir($this->logDir)) {
 				if (!@\mkdir($this->logDir, 0775, true) && !\is_dir($this->logDir)) {
 					throw new \RuntimeException(
-						'log dir create failed: ' . $this->logDir
+						'log dir create failed: ' . $this->logDir . $this->lastFailure()
 					);
 				}
 			}
@@ -553,34 +559,48 @@ final class ErrorHandler extends BaseService {
 			}
 
 			$line = $encoded . "\n";
+			$lineBytes = \strlen($line);
 			$threshold = \max(1, (int)$this->maxBytes);
 			$fh = @\fopen($file, 'ab');
 			if ($fh === false) {
-				throw new \RuntimeException('open failed: ' . $file);
+				throw new \RuntimeException('open failed: ' . $file . $this->lastFailure());
 			}
 
 			try {
-				@\flock($fh, \LOCK_EX);
-				\clearstatcache(true, $file);
-				$size = @\filesize($file) ?: 0;
+				$locked = @\flock($fh, \LOCK_EX);
+				$size = $this->streamSize($fh);
 
-				if (($size + \strlen($line)) > $threshold) {
+				if (($size + $lineBytes) > $threshold) {
 					@\flock($fh, \LOCK_UN);
 					@\fclose($fh);
+					$fh = false;
 					$this->rotate($file);
 
 					$fh = @\fopen($file, 'ab');
 					if ($fh === false) {
-						throw new \RuntimeException('reopen failed: ' . $file);
+						throw new \RuntimeException('reopen failed: ' . $file . $this->lastFailure());
 					}
-					@\flock($fh, \LOCK_EX);
+					$locked = @\flock($fh, \LOCK_EX);
+					$size = $this->streamSize($fh);
 				}
 
-				@\fwrite($fh, $line);
-				@\fflush($fh);
+				// A full disk or quota takes part of the line, or none.
+				$written = @\fwrite($fh, $line);
+				if ($written !== $lineBytes) {
+					$written = \is_int($written) ? $written : 0;
+					$cause   = $this->lastFailure();
+
+					// A partial line would run into the next record. Without the lock, the bytes
+					// after $size may already belong to another writer, so they stay.
+					$cut = ($written === 0) || ($locked && @\ftruncate($fh, $size));
+					throw new \RuntimeException("append failed: {$file}: {$written} of {$lineBytes} bytes written"
+						. ($cut ? '' : ', the partial line remains') . $cause);
+				}
 			} finally {
-				@\flock($fh, \LOCK_UN);
-				@\fclose($fh);
+				if ($fh !== false) {
+					@\flock($fh, \LOCK_UN);
+					@\fclose($fh);
+				}
 			}
 		} catch (\Throwable $t) {
 			@\error_log('[CitOmni CLI] writeJsonl failed: ' . $t->getMessage());
@@ -592,10 +612,19 @@ final class ErrorHandler extends BaseService {
 	 * Rotate a JSONL log using a sidecar lock and copy-and-truncate strategy.
 	 *
 	 * Behavior:
-	 * - Serializes rotations per file using a sidecar lock file.
-	 * - Copies current content to a UTC-timestamped sibling, then truncates.
+	 * - Serializes rotations per file using a sidecar lock file, and works under an exclusive
+	 *   lock on the live file. Without that lock it does not rotate.
+	 * - Copies current content to a UTC-timestamped sibling, then truncates. Truncates only once
+	 *   the copy is complete, synced to disk and renamed into place; a failure before that
+	 *   removes the copy and leaves the live file as it was, and a failed truncation leaves the
+	 *   records in both files.
+	 * - The rotated file gets the live file's permission bits.
 	 * - Prunes old siblings beyond $this->maxFiles.
 	 * - Never throws; errors go to PHP's error_log.
+	 *
+	 * Notes:
+	 * - Where locks or fsync() fail, the live file grows past max_bytes instead of rotating. A
+	 *   copy behind a stream wrapper other than plain files is not synced.
 	 *
 	 * @param  string  $file  Absolute path to the live JSONL file.
 	 * @return void
@@ -615,11 +644,13 @@ final class ErrorHandler extends BaseService {
 			}
 
 			try {
-				@\flock($main, \LOCK_EX);
+				// Copy and truncate are only safe while no writer can append in between.
+				if (!@\flock($main, \LOCK_EX)) {
+					throw new \RuntimeException('cannot lock ' . $file . '; not rotated');
+				}
 
-				\clearstatcache(true, $file);
 				$stat = @\fstat($main);
-				$size = (int)($stat['size'] ?? 0);
+				$size = \is_array($stat) ? (int)$stat['size'] : 0;
 				if ($size <= $this->maxBytes) {
 					return;
 				}
@@ -648,23 +679,37 @@ final class ErrorHandler extends BaseService {
 				if ($tmpH === false) {
 					$tmpH = @\fopen($tmp, 'wb');
 					if ($tmpH === false) {
-						return;
+						throw new \RuntimeException('cannot create ' . $tmp . $this->lastFailure() . '; not rotated');
 					}
 				}
 
-				try {
-					@\rewind($main);
-					@\stream_copy_to_stream($main, $tmpH);
-					@\fflush($tmpH);
+				// The live file is truncated only once its records are safe in the rotated file:
+				// complete, synced and published under its own name. Until then, a failure must
+				// leave the live file as it was.
+				@\rewind($main);
+				$copied  = @\stream_copy_to_stream($main, $tmpH);
+				$failure = ($copied === $size) ? '' : (($copied === false) ? 'copy failed' : "copied {$copied} of {$size} bytes") . $this->lastFailure();
 
-					@\ftruncate($main, 0);
-					@\fflush($main);
-				} finally {
-					@\fclose($tmpH);
+				// fsync() exists for plain files only; another stream wrapper keeps its own durability.
+				if ($failure === '' && \stream_get_meta_data($tmpH)['wrapper_type'] === 'plainfile' && !@\fsync($tmpH)) {
+					$failure = 'fsync failed';
+				}
+				@\fclose($tmpH);
+
+				if ($failure === '') {
+					@\chmod($tmp, $stat['mode'] & 0777);
+					if (!@\rename($tmp, $rotated)) {
+						$failure = 'rename failed' . $this->lastFailure();
+					}
+				}
+				if ($failure !== '') {
+					@\unlink($tmp);
+					throw new \RuntimeException("cannot publish {$rotated}: {$failure}; {$file} is unchanged");
 				}
 
-				@\rename($tmp, $rotated);
-				@\chmod($rotated, 0644);
+				if (!@\ftruncate($main, 0)) {
+					throw new \RuntimeException("cannot truncate {$file}; its records are also in {$rotated}");
+				}
 
 			} finally {
 				@\flock($main, \LOCK_UN);
@@ -688,6 +733,13 @@ final class ErrorHandler extends BaseService {
 	/**
 	 * Prune oldest rotated JSONL siblings, keeping at most $max.
 	 *
+	 * Behavior:
+	 * - Counts as a rotation only a file next to $file whose name rotate() could have created:
+	 *   <base>.<UTC timestamp><ext>, with or without a collision suffix. Other files, the
+	 *   rotations of other logs included, are left alone.
+	 * - Keeps the $max newest by the timestamp in their names and deletes the rest; a failed
+	 *   deletion is ignored.
+	 *
 	 * @param  string  $file  Base live JSONL path.
 	 * @param  int     $max   Maximum rotated files to keep (0 disables pruning).
 	 * @return void
@@ -697,25 +749,57 @@ final class ErrorHandler extends BaseService {
 			return;
 		}
 
-		[$prefix, $ext] = (static function (string $path): array {
-			$dot = \strrpos($path, '.');
-			return ($dot === false) ? [$path, ''] : [\substr($path, 0, $dot), \substr($path, $dot)];
-		})($file);
+		$dir  = \dirname($file);
+		$name = \basename($file);
+		$dot  = \strrpos($name, '.');
+		$base = ($dot === false) ? $name : \substr($name, 0, $dot);
+		$ext  = ($dot === false) ? '' : \substr($name, $dot);
 
-		$pattern = $prefix . '.*' . $ext;
-		$list = \glob($pattern, \GLOB_NOSORT) ?: [];
-		$list = \array_values(\array_filter($list, static fn(string $p) => $p !== $file && \is_file($p)));
-
-		\usort($list, static function (string $a, string $b): int {
-			$ma = @\filemtime($a) ?: 0;
-			$mb = @\filemtime($b) ?: 0;
-			return $mb <=> $ma;
-		});
-
-		$toDelete = \array_slice($list, $max);
-		foreach ($toDelete as $path) {
-			@\unlink($path);
+		// A directory listing instead of glob(): The directory path may contain glob syntax.
+		$entries = @\scandir($dir, \SCANDIR_SORT_NONE);
+		if ($entries === false) {
+			return;
 		}
+
+		$pattern   = '~\A' . \preg_quote($base, '~') . '\.\d{8}T\d{6}(?:\.\d{6})?Z(?:-[0-9a-f]{4})?' . \preg_quote($ext, '~') . '\z~';
+		$rotations = \preg_grep($pattern, $entries);
+		if (\count($rotations) <= $max) {
+			return;
+		}
+
+		// The UTC timestamps sort chronologically as strings; newest first.
+		\rsort($rotations, \SORT_STRING);
+
+		foreach (\array_slice($rotations, $max) as $entry) {
+			@\unlink($dir . '/' . $entry);
+		}
+	}
+
+
+	/**
+	 * Return the size of an open file.
+	 *
+	 * @param  resource  $handle  Open file.
+	 * @return int  Size in bytes; 0 when it cannot be read.
+	 */
+	private function streamSize(mixed $handle): int {
+		$stat = @\fstat($handle);
+		return \is_array($stat) ? (int)$stat['size'] : 0;
+	}
+
+
+	/**
+	 * Return PHP's last diagnostic when this file raised it, for an error_log breadcrumb.
+	 *
+	 * Right after a failed operation that raises one, such as fopen(), mkdir(), rename() or a
+	 * write to a plain file, that diagnostic is the operation's cause. After an operation that
+	 * fails without one, it can be an earlier diagnostic from this file.
+	 *
+	 * @return string  ": <diagnostic>", or an empty string when there is none or another file raised it.
+	 */
+	private function lastFailure(): string {
+		$last = \error_get_last();
+		return ($last !== null && $last['file'] === __FILE__) ? ': ' . $last['message'] : '';
 	}
 
 

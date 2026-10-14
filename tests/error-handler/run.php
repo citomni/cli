@@ -174,14 +174,15 @@ function startPhp(string $runDir, string $tag, array $args, array $ini = []) {
 /**
  * Run a PHP child process to completion in its own temporary directory, then collect what it left.
  *
- * The handler under test writes its logs to {dir}/logs, and PHP's own error log, when enabled
+ * The handler under test writes its logs to {dir}/<logs>, and PHP's own error log, when enabled
  * through $ini, is expected at {dir}/php.log.
  *
  * @param  list<string>           $args  Script path and its arguments.
  * @param  array<string, string>  $ini
+ * @param  string                 $logs  Name of the log directory below {dir}.
  * @return array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}
  */
-function runPhp(array $args, array $ini = []): array {
+function runPhp(array $args, array $ini = [], string $logs = 'logs'): array {
 	$runDir = makeRunDir();
 
 	try {
@@ -191,8 +192,8 @@ function runPhp(array $args, array $ini = []): array {
 			'exit'   => $exit,
 			'stdout' => (string)\file_get_contents($runDir . '/child.out'),
 			'stderr' => (string)\file_get_contents($runDir . '/child.err'),
-			'logs'   => readLogs($runDir . '/logs'),
-			'files'  => listFiles($runDir . '/logs'),
+			'logs'   => readLogs($runDir . '/' . $logs),
+			'files'  => listFiles($runDir . '/' . $logs),
 			'phpLog' => \is_file($runDir . '/php.log') ? (string)\file_get_contents($runDir . '/php.log') : '',
 		];
 	} finally {
@@ -209,6 +210,28 @@ function runPhp(array $args, array $ini = []): array {
  */
 function probe(string $case, array $ini = [], string $env = 'dev'): array {
 	return runPhp([__DIR__ . '/probe.php', $case, '{dir}/logs', $env], $ini);
+}
+
+
+/**
+ * Run the "fault" probe case: log one warning through faulty://logs, with PHP's error log in {dir}/php.log.
+ *
+ * @param  string  $spec  Operations to fail, joined with "+", then "@" and the number of records to seed.
+ * @return array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}
+ */
+function fault(string $spec): array {
+	return runPhp([__DIR__ . '/probe.php', 'fault', '{dir}/logs', 'dev', $spec], ['log_errors' => '1', 'error_log' => '{dir}/php.log']);
+}
+
+
+/**
+ * Rotations of cli_err_phperror.jsonl among $files.
+ *
+ * @param  list<string>  $files  File names, sorted.
+ * @return list<string>
+ */
+function rotated(array $files): array {
+	return \array_values(\preg_grep('/^cli_err_phperror\.\d{8}T.*\.jsonl$/', $files));
 }
 
 
@@ -389,6 +412,59 @@ $checks = [
 		$rotated = \preg_grep('/^cli_err_phperror\..+\.jsonl$/', $r['files']);
 		same(2, \count($rotated), 'rotated files with max_files=2 (' . export($r['files']) . ')');
 		same([], \array_values(\preg_grep('/\.tmp$/', $r['files'])), 'leftover temp files');
+	},
+
+	'a line the log takes only in part is cut off again, and error_log names the file' => static function (): void {
+		$r = fault('append-short@3');
+		same(3, \count($r['logs']['cli_err_phperror.jsonl'] ?? []), 'records in the live file' . describe($r));
+		expect(\str_contains($r['phpLog'], 'append failed: faulty://logs/cli_err_phperror.jsonl: 10 of '), "PHP's error log: " . squash($r['phpLog']));
+	},
+
+	'a rotation whose copy is cut short leaves the live file as it was' => static function (): void {
+		$r = fault('copy-short@10');
+		same(11, \count($r['logs']['cli_err_phperror.jsonl'] ?? []), 'records in the live file' . describe($r));
+		same([], rotated($r['files']), 'rotated files');
+		same([], \array_values(\preg_grep('/\.tmp$/', $r['files'])), 'leftover temp files');
+		expect(\str_contains($r['phpLog'], 'is unchanged'), "PHP's error log: " . squash($r['phpLog']));
+	},
+
+	'a rotation whose rename fails removes the copy and leaves the live file as it was' => static function (): void {
+		$r = fault('rename@10');
+		same(11, \count($r['logs']['cli_err_phperror.jsonl'] ?? []), 'records in the live file' . describe($r));
+		same([], rotated($r['files']), 'rotated files');
+		same([], \array_values(\preg_grep('/\.tmp$/', $r['files'])), 'leftover temp files');
+		expect(\str_contains($r['phpLog'], 'rename failed'), "PHP's error log: " . squash($r['phpLog']));
+	},
+
+	'a rotation whose truncation fails keeps the records in both files, and error_log says so' => static function (): void {
+		$r = fault('truncate@10');
+		$rotated = rotated($r['files']);
+		same(1, \count($rotated), 'rotated files' . describe($r));
+		same(10, \count($r['logs'][$rotated[0]] ?? []), 'records in the rotated file');
+		same(11, \count($r['logs']['cli_err_phperror.jsonl'] ?? []), 'records in the live file');
+		expect(\str_contains($r['phpLog'], 'cannot truncate'), "PHP's error log: " . squash($r['phpLog']));
+	},
+
+	'without the lock on the live file, nothing is rotated' => static function (): void {
+		$r = fault('lock@10');
+		same([], rotated($r['files']), 'rotated files' . describe($r));
+		same(11, \count($r['logs']['cli_err_phperror.jsonl'] ?? []), 'records in the live file');
+		expect(\str_contains($r['phpLog'], 'cannot lock'), "PHP's error log: " . squash($r['phpLog']));
+	},
+
+	'retention keeps the newest rotations of its own log and leaves every other file alone' => static function (): void {
+		$r = runPhp([__DIR__ . '/probe.php', 'retention', '{dir}/logs', 'dev']);
+		$rotated = rotated($r['files']);
+		same(2, \count($rotated), 'rotated files (' . export($r['files']) . ')');
+		same('cli_err_phperror.20260105T120000.000000Z.jsonl', $rotated[0], 'older rotation kept');
+		foreach (['cli_err_phperror.backup.jsonl', 'cli_err_phperror.jsonl.lock', 'cli_err_phperror.20260109T120000.000000Z.jsonl.tmp', 'cli_err_exception.20260101T120000.000000Z.jsonl'] as $name) {
+			expect(\in_array($name, $r['files'], true), "{$name} was deleted");
+		}
+	},
+
+	'retention works in a directory whose path contains glob syntax' => static function (): void {
+		$r = runPhp([__DIR__ . '/probe.php', 'retention', '{dir}/logs[1]', 'dev'], [], 'logs[1]');
+		same(2, \count(rotated($r['files'])), 'rotated files (' . export($r['files']) . ')');
 	},
 
 ];

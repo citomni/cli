@@ -11,7 +11,7 @@ php tests/error-handler/run.php
 Expected result:
 
 ```
-16 passed, 0 failed, 1 skipped
+23 passed, 0 failed, 1 skipped
 ```
 
 The skipped check starts several writer processes at once. It runs only when `CITOMNI_TEST_PARALLEL` is `1`:
@@ -29,7 +29,7 @@ php tests/error-handler/run.php
 Expected result with the multi-process check:
 
 ```
-17 passed, 0 failed
+24 passed, 0 failed
 ```
 
 `PASS` lines go to stdout, `FAIL` lines to stderr. The last line holds the totals, and the exit code is 1 when a check fails.
@@ -44,6 +44,7 @@ The handler installs process-wide handlers, and many cases end the process. Ever
 | `probe.php` | Child. Installs the real handler and runs one case. |
 | `oom.php` | Child. Runs out of memory on a heap with no free page left. |
 | `doubles.php` | `class_alias` doubles for `\CitOmni\Kernel\Service\BaseService` and `\CitOmni\Kernel\Arr`. |
+| `faults.php` | `FaultWrapper`: a stream wrapper (`faulty://logs`) over the child's real log directory that fails the operations a case names. |
 
 Each child gets its own directory under `sys_get_temp_dir()`, named `citomni_cli_error_handler_<random>`. The runner removes that directory after the check and touches nothing else.
 
@@ -71,4 +72,15 @@ R marks a regression check: it fails against the handler as it was before the ch
 | R | compile fatal is logged by the shutdown handler with errno, level, and error_id | Records had no `level` field. |
 | R | out-of-memory fatal on a full heap is still logged and rendered | The shutdown handler ran out of memory itself. The process ended with exit code 255, and nothing was logged or rendered. |
 | | rotation keeps the newest record in the live file and prunes to max_files | Existing behavior |
+| R | a line the log takes only in part is cut off again, and error_log names the file | The partial line stayed and ran into the next record, and nothing was reported. |
+| R | a rotation whose copy is cut short leaves the live file as it was | The live file was truncated anyway: the records that did not make it into the copy were lost. |
+| R | a rotation whose rename fails removes the copy and leaves the live file as it was | The live file was truncated before the rename; the records stayed in a `.tmp` file that retention never saw. |
+| R | a rotation whose truncation fails keeps the records in both files, and error_log says so | The failure was not reported. |
+| R | without the lock on the live file, nothing is rotated | The handler copied and truncated without the lock, so a concurrent append could be lost. |
+| R | retention keeps the newest rotations of its own log and leaves every other file alone | Any `<base>.*<ext>` file counted as a rotation, so `cli_err_phperror.backup.jsonl` was deleted. |
+| R | retention works in a directory whose path contains glob syntax | `glob()` read `logs[1]` as a character class, found nothing and pruned nothing. |
 | | concurrent writers lose no records across rotations | Existing behavior, with `CITOMNI_TEST_PARALLEL=1` only: 4 processes write 100 records each through dozens of rotations. |
+
+The fault cases run `probe.php fault <faults>@<records>`: The child seeds the live log with that many records, puts `faulty://logs` over its real log directory and logs one warning through it. Ten records rotate at the case's `max_bytes` of 1000; fewer are appended to. `FaultWrapper` has no `fsync()` (PHP offers none for stream wrappers), so the rotation copy is synced only on plain files.
+
+Against the handler before the rotation and append changes, with `CITOMNI_TEST_PARALLEL=1`: `17 passed, 7 failed`. The seven new R checks fail; every other check passes.
