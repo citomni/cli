@@ -38,7 +38,7 @@ final class Registry {
 	 * - /config/services_cli.php has highest precedence in CLI mode, followed by
 	 *   /config/services.php, providers, and the vendor baseline.
 	 */
-	public const MAP_CLI = [
+	public const array MAP_CLI = [
 		'runner' => \CitOmni\Cli\Service\Runner::class,
 		'errorHandler' => \CitOmni\Cli\Service\ErrorHandler::class,
 	];
@@ -68,7 +68,7 @@ final class Registry {
 	 * - Providers may extend or override this baseline, and the application layer
 	 *   remains the final authority.
 	 */
-	public const CFG_CLI = [
+	public const array CFG_CLI = [
 
 		/*
 		 *------------------------------------------------------------------
@@ -143,7 +143,7 @@ final class Registry {
 	 *   override or replace vendor/provider commands by command key.
 	 * - Empty arrays are ignored during merge.
 	 */
-	public const COMMANDS_CLI = [
+	public const array COMMANDS_CLI = [
 		'app:info' => [
 			'command'     => \CitOmni\Cli\Command\AppInfoCommand::class,
 			'description' => 'Show application and runtime information.',
