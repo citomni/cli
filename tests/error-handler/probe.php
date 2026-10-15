@@ -15,6 +15,7 @@ declare(strict_types=1);
 
 namespace CitOmni\Cli\Tests\ErrorHandler;
 
+use CitOmni\Cli\Boot\Registry;
 use CitOmni\Cli\Service\ErrorHandler;
 
 /*
@@ -156,6 +157,7 @@ if (!isset($cases[$case]) || $logDir === '') {
 
 require __DIR__ . '/doubles.php';
 require __DIR__ . '/faults.php';
+require __DIR__ . '/../../src/Boot/Registry.php';
 require __DIR__ . '/../../src/Service/ErrorHandler.php';
 
 /** $count valid JSONL records of about 200 bytes each. */
@@ -196,8 +198,8 @@ $options = \array_replace_recursive([
 	'render' => ['trigger' => \E_ALL, 'detail' => ['level' => 1]],
 ], $overrides[$case] ?? []);
 
-// The handler reads cfg->error_handler first; an empty cfg leaves only $options.
-$app = (object)['cfg' => new \stdClass()];
+// The handler reads the shipped cfg->error_handler and puts $options on top, as in an app.
+$app = (object)['cfg' => (object)['error_handler' => Registry::CFG_CLI['error_handler']]];
 
 (new ErrorHandler($app, $options))->install();
 

@@ -149,7 +149,8 @@ final class ErrorHandler extends BaseService {
 	 * - Merges ctor $this->options over cfg using deterministic "last wins".
 	 * - Freezes runtime options by clearing $this->options after the merge.
 	 * - Calls hydrate() to populate all internal fields from $this->opt.
-	 * - Swallows cfg read failures and falls back to an empty config.
+	 * - Swallows cfg read failures, a missing error_handler node included, logs them to
+	 *   PHP's error_log and falls back to an empty config.
 	 *
 	 * Notes:
 	 * - No global side effects: Does not modify INI or resolve other services.
@@ -161,7 +162,7 @@ final class ErrorHandler extends BaseService {
 		$cfgNode = [];
 
 		try {
-			$raw = $this->app->cfg->error_handler ?? [];
+			$raw = $this->app->cfg->error_handler;
 			$cfgNode = ($raw instanceof \CitOmni\Kernel\Cfg)
 				? $raw->toArray()
 				: (\is_array($raw) ? $raw : []);
@@ -184,6 +185,8 @@ final class ErrorHandler extends BaseService {
 	 * - Reads $this->opt and assigns strongly-typed properties.
 	 * - Sanitizes render mask to exclude fatal-class errors.
 	 * - Developer details enabled only when level >= 1 AND environment is dev.
+	 * - Values are cast to the field types, not validated; a missing key keeps a built-in
+	 *   default, so the handler still works when init() fell back to an empty config.
 	 *
 	 * Notes:
 	 * - Pure in-memory: No I/O, no service lookups, no global effects.

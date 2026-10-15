@@ -46,6 +46,8 @@ The handler installs process-wide handlers, and many cases end the process. Ever
 | `doubles.php` | `class_alias` doubles for `\CitOmni\Kernel\Service\BaseService` and `\CitOmni\Kernel\Arr`. |
 | `faults.php` | `FaultWrapper`: a stream wrapper (`faulty://logs`) over the child's real log directory that fails the operations a case names. |
 
+Both children give the handler the `error_handler` node of `Registry::CFG_CLI` and put the case's options on top, as an app's config would.
+
 Each child gets its own directory under `sys_get_temp_dir()`, named `citomni_cli_error_handler_<random>`. The runner removes that directory after the check and touches nothing else.
 
 `oom.php` is a separate script on purpose. Whether a handler without a memory reserve survives an out-of-memory fatal depends on the heap layout, and that layout includes everything compiled before the fatal. The script calls `gc_mem_caches()` and then allocates only strings of one length, so the fatal hits a heap with no free page and one full size class. The shutdown handler needs a fresh run of pages for every full size class it allocates from; the checks use 4000-byte strings (whole pages) and 615-, 1255- and 1767-byte strings, which fill the 640-, 1280- and 1792-byte classes, whose runs take 5, 5 and 7 pages. PHP cannot apply a memory limit below 2M (one heap chunk), so the checks use 4M, 16M, and 64M.

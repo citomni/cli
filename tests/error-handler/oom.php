@@ -15,6 +15,7 @@ declare(strict_types=1);
 
 namespace CitOmni\Cli\Tests\ErrorHandler;
 
+use CitOmni\Cli\Boot\Registry;
 use CitOmni\Cli\Service\ErrorHandler;
 
 /*
@@ -67,6 +68,7 @@ if ($logDir === '' || $mib <= 0 || $bytes <= 0) {
 \define('CITOMNI_ENVIRONMENT', 'dev');
 
 require __DIR__ . '/doubles.php';
+require __DIR__ . '/../../src/Boot/Registry.php';
 require __DIR__ . '/../../src/Service/ErrorHandler.php';
 
 if ($others >= 0) {
@@ -84,7 +86,8 @@ if ($argvBytes > 0) {
 	$_SERVER['argv'][] = \str_repeat('a', $argvBytes);
 }
 
-$app = (object)['cfg' => new \stdClass()];
+// The handler reads the shipped cfg->error_handler and puts the options below on top, as in an app.
+$app = (object)['cfg' => (object)['error_handler' => Registry::CFG_CLI['error_handler']]];
 
 (new ErrorHandler($app, [
 	'log'    => ['path' => $logDir, 'trigger' => \E_ALL, 'max_bytes' => 100_000, 'max_files' => 10],
