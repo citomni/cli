@@ -631,9 +631,10 @@ Configuration is composed in this order, with later values taking precedence.
 
 Associative configuration is merged recursively. Use small application overrides instead of copying the entire provider baseline.
 
-Read composed configuration through `$this->app->cfg`. Direct access to a missing key throws; use `??` for an intentional default.
+Read composed configuration through `$this->app->cfg`. A direct read of a missing key throws `\OutOfBoundsException`; `??` and `isset()` check every node on the path and never throw on a missing key. Read cfg that your package's Registry ships, or that your app sets in its own config files, directly. Read app cfg from a package, another package's cfg, or a path that exists in one mode only with `?? <default>`:
 
 ```php
+// locale.timezone is app cfg; a package reads it with a default.
 $timezone = (string)($this->app->cfg->locale->timezone ?? 'UTC');
 ```
 
