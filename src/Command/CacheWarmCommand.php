@@ -91,10 +91,10 @@ class CacheWarmCommand extends BaseCommand {
 	 *   the cache without any environment overlay.
 	 * - Prints the written files per mode on stdout, under the target environment. With
 	 *   --json, one JSON object instead:
-	 *     - ok true, env and modes, with the result of App::warmCache() per warmed mode, or
-	 *       "skipped" for HTTP.
-	 *     - ok false, error and an empty modes object when --mode=http finds no citomni/http.
-	 *       The error also goes to stderr.
+	 *     - ok true and result, which holds env and modes, with the result of
+	 *       App::warmCache() per warmed mode, or "skipped" for HTTP.
+	 *     - ok false and error when --mode=http finds no citomni/http. The error also goes
+	 *       to stderr.
 	 * - Writes OPCACHE_NOTE to stderr whenever the HTTP cache was warmed.
 	 * - Exit code 0, 1 when --mode=http finds no citomni/http, or 2 for an empty --env.
 	 *
@@ -129,7 +129,7 @@ class CacheWarmCommand extends BaseCommand {
 		if ($mode === 'http' && !$httpInstalled) {
 			$message = '--mode=http requires citomni/http, which is not installed.';
 			if ($json) {
-				$this->stdout($this->encodeJson(['ok' => false, 'error' => $message, 'modes' => (object)[]]));
+				$this->stdout($this->encodeJson(['ok' => false, 'error' => $message]));
 			}
 			$this->error($message);
 			return self::FAILURE;
@@ -166,7 +166,7 @@ class CacheWarmCommand extends BaseCommand {
 
 		// -- 4. Report --------------------------------------------------------
 		if ($json) {
-			$this->stdout($this->encodeJson(['ok' => true, 'env' => $targetEnv, 'modes' => (object)$modes]));
+			$this->stdout($this->encodeJson(['ok' => true, 'result' => ['env' => $targetEnv, 'modes' => (object)$modes]]));
 		}
 
 		if (\is_array($modes['http'] ?? null)) {

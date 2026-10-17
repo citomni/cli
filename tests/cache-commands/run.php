@@ -132,16 +132,15 @@ function runCommand(string $class, string $name, string ...$args): array {
 
 
 /**
- * Decode the single JSON document a command printed with --json.
+ * Decode the single JSON document a command printed with --json, objects as arrays.
  *
  * @param  array{exit: int, stdout: list<string>, stderr: list<string>, calls: list<list<mixed>>}  $r  Result of runCommand().
- * @param  bool  $assoc  Decode objects as arrays.
  * @return mixed  Decoded value.
  * @throws \CitOmni\Cli\Tests\CacheCommands\CheckFailed  When stdout does not hold exactly one line.
  */
-function jsonOutput(array $r, bool $assoc = true): mixed {
+function jsonOutput(array $r): mixed {
 	same(1, \count($r['stdout']), 'stdout writes with --json');
-	return \json_decode($r['stdout'][0], $assoc, 512, \JSON_THROW_ON_ERROR);
+	return \json_decode($r['stdout'][0], true, 512, \JSON_THROW_ON_ERROR);
 }
 
 
@@ -182,7 +181,7 @@ $withoutHttp = [
 	'cache:warm --json without citomni/http reports "skipped" for HTTP' => static function (): void {
 		$r = runCommand(CacheWarmCommand::class, 'cache:warm', '--json');
 		same(0, $r['exit'], 'exit code');
-		same(['ok' => true, 'env' => 'dev', 'modes' => ['cli' => AppDouble::paths('cli'), 'http' => 'skipped']], jsonOutput($r), 'JSON');
+		same(['ok' => true, 'result' => ['env' => 'dev', 'modes' => ['cli' => AppDouble::paths('cli'), 'http' => 'skipped']]], jsonOutput($r), 'JSON');
 	},
 
 	'cache:warm --mode=http without citomni/http fails before touching App' => static function (): void {
@@ -193,12 +192,10 @@ $withoutHttp = [
 		same([HTTP_MISSING], $r['stderr'], 'stderr');
 	},
 
-	'cache:warm --mode=http --json without citomni/http prints ok=false and an empty modes object' => static function (): void {
+	'cache:warm --mode=http --json without citomni/http prints ok=false and the error only' => static function (): void {
 		$r = runCommand(CacheWarmCommand::class, 'cache:warm', '--mode=http', '--json');
 		same(1, $r['exit'], 'exit code');
-		$json = jsonOutput($r, false);
-		same([false, HTTP_MISSING], [$json->ok ?? null, $json->error ?? null], 'ok, error');
-		expect(($json->modes ?? null) instanceof \stdClass && (array)$json->modes === [], 'modes must be {}: ' . $r['stdout'][0]);
+		same(['ok' => false, 'error' => HTTP_MISSING], jsonOutput($r), 'JSON');
 	},
 
 	'cache:clear --mode=http without citomni/http fails before touching App' => static function (): void {
@@ -206,6 +203,13 @@ $withoutHttp = [
 		same(1, $r['exit'], 'exit code');
 		same([], $r['calls'], 'App calls');
 		same([HTTP_MISSING], $r['stderr'], 'stderr');
+	},
+
+	'cache:clear --mode=http --json without citomni/http prints ok=false and the error only' => static function (): void {
+		$r = runCommand(CacheClearCommand::class, 'cache:clear', '--mode=http', '--json');
+		same(1, $r['exit'], 'exit code');
+		same([], $r['calls'], 'App calls');
+		same(['ok' => false, 'error' => HTTP_MISSING], jsonOutput($r), 'JSON');
 	},
 
 	'cache:warm --env= is a usage error, not a cache built without an env overlay' => static function (): void {
@@ -256,10 +260,10 @@ $withHttp = [
 		same(['CLI cache warmed (env: prod):', 'HTTP cache warmed (env: prod):'], \array_values(\preg_grep('/^\S/', $r['stdout'])), 'headers');
 	},
 
-	'cache:warm -j prints one JSON object with ok, env, and both modes' => static function (): void {
+	'cache:warm -j prints ok=true with env and both modes as result' => static function (): void {
 		$r = runCommand(CacheWarmCommand::class, 'cache:warm', '-j');
 		same(0, $r['exit'], 'exit code');
-		same(['ok' => true, 'env' => 'dev', 'modes' => ['cli' => AppDouble::paths('cli'), 'http' => AppDouble::paths('http')]], jsonOutput($r), 'JSON');
+		same(['ok' => true, 'result' => ['env' => 'dev', 'modes' => ['cli' => AppDouble::paths('cli'), 'http' => AppDouble::paths('http')]]], jsonOutput($r), 'JSON');
 		expect(\str_starts_with($r['stderr'][0] ?? '', NOTE_START), 'OPcache note missing from stderr: ' . export($r['stderr']));
 	},
 
@@ -271,7 +275,7 @@ $withHttp = [
 		$r = runCommand(CacheClearCommand::class, 'cache:clear', '--json');
 		same(0, $r['exit'], 'exit code');
 		same([['clear', 'cli'], ['construct', 'http', '/app/config'], ['clear', 'http']], $r['calls'], 'App calls');
-		same(['ok' => true, 'modes' => ['cli' => $cli, 'http' => $http]], jsonOutput($r), 'JSON');
+		same(['ok' => true, 'result' => ['modes' => ['cli' => $cli, 'http' => $http]]], jsonOutput($r), 'JSON');
 	},
 
 	'cache:clear lists removed files and says when a mode had nothing to clear' => static function (): void {

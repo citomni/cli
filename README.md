@@ -493,7 +493,7 @@ The command delegates inspection to Kernel's `Support\AppInfo`. Human-readable o
 
 | Option | Effect |
 |---|---|
-| `--json`, `-j` | Prints the complete AppInfo snapshot as JSON. |
+| `--json`, `-j` | Prints one JSON document with `ok` and the complete AppInfo snapshot as `result`. |
 | `--env-configs` | Includes freshly built `dev`, `stage`, and `prod` configuration projections. |
 | `--raw` | Requests unredacted configuration values. |
 
@@ -516,7 +516,7 @@ php bin/citomni cache:clear --mode=http --json
 | `--mode=http` | Both | Processes HTTP caches through a second App in HTTP mode. Requires `citomni/http`. |
 | `--mode=all` | Both | Default. Processes CLI first, then HTTP if installed; otherwise reports HTTP as skipped. |
 | `--env=prod` | `cache:warm` | Selects the configuration and command/route overlay environment to compile. Defaults to `CITOMNI_ENVIRONMENT`, or `prod` if undefined. |
-| `--json`, `-j` | Both | Emits one result object on stdout after successful processing. |
+| `--json`, `-j` | Both | Prints one JSON document on stdout when the command ends with exit code `0` or `1`. |
 
 An empty `--env` is a usage error. `--mode=http` without the HTTP package returns `1`. Clearing a cache file that is already absent is successful.
 
@@ -525,21 +525,23 @@ A successful warm result with `--mode=all --json` in a CLI-only application has 
 ```json
 {
 	"ok": true,
-	"env": "prod",
-	"modes": {
-		"cli": {
-			"cfg": "/path/to/app/var/cache/cfg.cli.php",
-			"dispatch": "/path/to/app/var/cache/commands.cli.php",
-			"services": "/path/to/app/var/cache/services.cli.php"
-		},
-		"http": "skipped"
+	"result": {
+		"env": "prod",
+		"modes": {
+			"cli": {
+				"cfg": "/path/to/app/var/cache/cfg.cli.php",
+				"dispatch": "/path/to/app/var/cache/commands.cli.php",
+				"services": "/path/to/app/var/cache/services.cli.php"
+			},
+			"http": "skipped"
+		}
 	}
 }
 ```
 
-A clear result omits `env` and uses `null` for each file that was absent. HTTP processing returns the same three path keys for HTTP files. When HTTP is processed, the commands also write an OPcache note to stderr.
+A clear `result` omits `env` and uses `null` for each file that was absent. HTTP processing returns the same three path keys for HTTP files. When HTTP is processed, the commands also write an OPcache note to stderr.
 
-The explicit missing-HTTP-package failure produces an error object when `--json` is requested. Unexpected exceptions are handled by the global error handler on stderr and do **not** produce a JSON error object. Automation must check the exit code as well as stdout.
+The missing-HTTP-package failure prints `{"ok": false, "error": "..."}` when `--json` is requested, with exit code `1`. `ok` is `true` exactly when the exit code is `0`. An empty `--env` is a usage error with exit code `2` and prints no JSON. Unexpected exceptions are handled by the global error handler on stderr and do **not** produce a JSON document. Automation must check the exit code as well as stdout.
 
 ---
 

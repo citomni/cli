@@ -27,7 +27,8 @@ use CitOmni\Kernel\Support\AppInfo;
  *
  * Rules:
  * - Print only what AppInfo::snapshot() returns; collect nothing itself.
- * - With --json, write the snapshot as one JSON document to stdout, and nothing else.
+ * - With --json, write one JSON document to stdout, with ok true and the snapshot as result,
+ *   and nothing else.
  */
 class AppInfoCommand extends BaseCommand {
 
@@ -68,7 +69,8 @@ class AppInfoCommand extends BaseCommand {
 	 * Behavior:
 	 * - Cfg values that AppInfo treats as secret are masked, unless --raw is given.
 	 * - --env-configs adds the cfg that dev, stage and prod would get, built now in this process.
-	 * - With --json: The snapshot as one pretty-printed JSON document on stdout.
+	 * - With --json: One pretty-printed JSON document on stdout, with ok true and the snapshot
+	 *   as result.
 	 * - Otherwise: The scalar sections as aligned label and value lines, the structured sections
 	 *   as pretty-printed JSON, each under its title.
 	 * - Exit code 0.
@@ -89,7 +91,7 @@ class AppInfoCommand extends BaseCommand {
 		);
 
 		if ($json) {
-			$this->stdout($this->encodeJson($snapshot));
+			$this->stdout($this->encodeJson(['ok' => true, 'result' => $snapshot]));
 			return self::SUCCESS;
 		}
 

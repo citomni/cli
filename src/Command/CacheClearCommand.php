@@ -81,10 +81,10 @@ class CacheClearCommand extends BaseCommand {
 	 * - --mode=http without citomni/http clears nothing and fails.
 	 * - A cache file that is not present is reported as not present; that is no failure.
 	 * - Prints the removed files per mode on stdout. With --json, one JSON object instead:
-	 *     - ok true and modes, with the result of App::clearCache() per cleared mode, or
-	 *       "skipped" for HTTP.
-	 *     - ok false, error and an empty modes object when --mode=http finds no citomni/http.
-	 *       The error also goes to stderr.
+	 *     - ok true and result, which holds modes, with the result of App::clearCache() per
+	 *       cleared mode, or "skipped" for HTTP.
+	 *     - ok false and error when --mode=http finds no citomni/http. The error also goes
+	 *       to stderr.
 	 * - Writes OPCACHE_NOTE to stderr whenever it cleared HTTP, also when there was nothing to
 	 *   clear.
 	 * - Exit code 0, or 1 when --mode=http finds no citomni/http.
@@ -109,7 +109,7 @@ class CacheClearCommand extends BaseCommand {
 		if ($mode === 'http' && !$httpInstalled) {
 			$message = '--mode=http requires citomni/http, which is not installed.';
 			if ($json) {
-				$this->stdout($this->encodeJson(['ok' => false, 'error' => $message, 'modes' => (object)[]]));
+				$this->stdout($this->encodeJson(['ok' => false, 'error' => $message]));
 			}
 			$this->error($message);
 			return self::FAILURE;
@@ -143,7 +143,7 @@ class CacheClearCommand extends BaseCommand {
 
 		// -- 4. Report --------------------------------------------------------
 		if ($json) {
-			$this->stdout($this->encodeJson(['ok' => true, 'modes' => (object)$modes]));
+			$this->stdout($this->encodeJson(['ok' => true, 'result' => ['modes' => (object)$modes]]));
 		}
 
 		if (\is_array($modes['http'] ?? null)) {
