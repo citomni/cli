@@ -55,7 +55,7 @@ use CitOmni\Kernel\Runtime;
  *   $app = \CitOmni\Cli\Kernel::boot(__DIR__ . '/config');
  *   // Use $app->commands, $app->cfg, etc. without dispatching.
  */
-final class Kernel {
+class Kernel {
 
 
 	/**

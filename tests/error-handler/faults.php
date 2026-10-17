@@ -32,7 +32,7 @@ namespace CitOmni\Cli\Tests\ErrorHandler;
  *     - lock: flock() fails.
  * - flock() never locks the real file; the cases run in one process.
  */
-final class FaultWrapper {
+class FaultWrapper {
 
 	public const DIR = 'faulty://logs';
 

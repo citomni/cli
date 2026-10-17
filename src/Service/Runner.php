@@ -60,7 +60,7 @@ use CitOmni\Kernel\Service\BaseService;
  *   $app = \CitOmni\Cli\Kernel::boot(__DIR__ . '/config');
  *   $exitCode = $app->runner->run(['bin/citomni', 'cache:warm']);
  */
-final class Runner extends BaseService {
+class Runner extends BaseService {
 
 	/**
 	 * Dispatch a CLI command based on argv.

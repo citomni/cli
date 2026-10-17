@@ -15,7 +15,7 @@ declare(strict_types=1);
 
 namespace CitOmni\Cli\Boot;
 
-final class Registry {
+class Registry {
 	
 	/**
 	 * Vendor baseline service map for CLI mode.

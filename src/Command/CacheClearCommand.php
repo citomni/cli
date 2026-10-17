@@ -52,7 +52,7 @@ use CitOmni\Kernel\Mode;
  *   php bin/citomni cache:clear
  *   php bin/citomni cache:clear --mode=http --json
  */
-final class CacheClearCommand extends BaseCommand {
+class CacheClearCommand extends BaseCommand {
 
 	/** Written to stderr whenever the HTTP cache was cleared. */
 	private const OPCACHE_NOTE = [

@@ -27,7 +27,7 @@ use CitOmni\Kernel\Support\AppInfo;
  * environment configuration projections, and --json emits the AppInfo
  * snapshot directly for machine consumption.
  */
-final class AppInfoCommand extends BaseCommand {
+class AppInfoCommand extends BaseCommand {
 
 
 	/**

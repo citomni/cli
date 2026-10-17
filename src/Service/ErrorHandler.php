@@ -75,7 +75,7 @@ use CitOmni\Kernel\Service\BaseService;
  * - A log record keeps at most ARGV_MAX_BYTES of the command line, so the record of an
  *   out-of-memory fatal stays within what MEMORY_RESERVE_BYTES can write.
  */
-final class ErrorHandler extends BaseService {
+class ErrorHandler extends BaseService {
 
 	/** JSON flags for log records: invalid UTF-8 is substituted, never turned into null. */
 	private const JSON_FLAGS = \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_PARTIAL_OUTPUT_ON_ERROR | \JSON_INVALID_UTF8_SUBSTITUTE;

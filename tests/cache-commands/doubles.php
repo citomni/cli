@@ -236,7 +236,7 @@ final class HelpFormatterDouble {
  * Stand-in for \CitOmni\Http\Boot\Registry. run.php aliases it only for the checks
  * that need citomni/http installed, since an alias cannot be removed again.
  */
-final class HttpRegistryDouble {
+class HttpRegistryDouble {
 }
 
 

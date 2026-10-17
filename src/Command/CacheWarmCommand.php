@@ -58,7 +58,7 @@ use CitOmni\Kernel\Mode;
  *   php bin/citomni cache:warm
  *   php bin/citomni cache:warm --env=prod --json
  */
-final class CacheWarmCommand extends BaseCommand {
+class CacheWarmCommand extends BaseCommand {
 
 	/** Written to stderr whenever the HTTP cache was warmed. */
 	private const OPCACHE_NOTE = [

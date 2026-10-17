@@ -56,7 +56,7 @@ const LOGGED_ARGV_BYTES = 4_096 + 3;
 /**
  * A failed expectation, reported as FAIL with its message.
  */
-final class CheckFailed extends \RuntimeException {
+class CheckFailed extends \RuntimeException {
 }
 
 
