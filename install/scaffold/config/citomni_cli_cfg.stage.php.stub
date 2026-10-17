@@ -15,61 +15,24 @@ declare(strict_types=1);
 
 /*
  * ------------------------------------------------------------------
- * CLI CONFIG OVERLAY (stage)
+ * CLI CONFIGURATION (stage)
  * ------------------------------------------------------------------
- * This is the final CLI-specific config layer for the "stage" environment.
+ * The app's cfg for CLI mode in the stage environment.
  *
- * Merge model (last wins):
- *   1) Vendor CLI baseline:   \CitOmni\Cli\Boot\Registry::CFG_CLI
- *   2) Providers:             each CFG_COMMON, then CFG_CLI, in providers.php order
- *   3) App common base:       /config/citomni_cfg.php
- *   4) App CLI base:          /config/citomni_cli_cfg.php
- *   5) App common env:        /config/citomni_cfg.{ENV}.php
- *   6) App CLI env:           /config/citomni_cli_cfg.{ENV}.php    (this file)
+ * Rules:
+ * - Set only the keys where CLI in stage deliberately differs from the
+ *   layers before this file. Stage keys shared with HTTP belong in
+ *   citomni_cfg.stage.php.
+ * - Leave a key out to keep the earlier value. Never write an empty
+ *   array as a placeholder; it replaces the earlier value.
+ * - Comment why a key deviates when the value does not show it. What a
+ *   key means is documented where the key is defined.
  *
- * This file wins over all earlier cfg layers when the resolved {ENV} is "stage".
- *
- * Typical usage:
- *   - Mirror production error posture without exposing developer traces.
- *   - Keep logs informative for QA and staging verification.
- *   - Override only what truly differs from the shared base config.
- *
- * Policy:
- *   - Only put keys here when you intend to *override* vendor/provider defaults.
- *     Keep overlays minimal and intentional; do not mirror the full baseline.
- *   - Stage should behave predictably and stay close to production.
- *   - Stage overrides shared by HTTP and CLI belong in /config/citomni_cfg.stage.php.
- *
- * Notes:
- *   - CITOMNI_ENVIRONMENT must equal "stage" for this file to load.
- *   - Stage should not show developer traces in terminal output by default; rely on logs instead.
- *
- * @internal App-owned overlay: small, deliberate, CI-friendly.
+ * Merge order and file roles: CONFIGURATION.md in this directory and the
+ * citomni/cli README. The keys of citomni/cli and their baseline:
+ * \CitOmni\Cli\Boot\Registry::CFG_CLI.
  * ------------------------------------------------------------------
  */
 return [
-
-	/*
-	 * ------------------------------------------------------------------
-	 * ERROR HANDLER
-	 * ------------------------------------------------------------------
-	 * Do not show dev details on stage; keep logs verbose.
-	 */
-	'error_handler' => [
-		'render' => [
-			'trigger' => 0,
-			'detail' => [
-				'level' => 0,
-			],
-			// no force_error_reporting override on stage
-		],
-		'log' => [
-			'trigger'   => E_ALL,
-			'path'      => \CITOMNI_APP_PATH . '/var/logs',
-			'max_bytes' => 2_000_000,
-			'max_files' => 10,
-		],
-	],
-
 
 ];

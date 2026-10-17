@@ -15,88 +15,24 @@ declare(strict_types=1);
 
 /*
  * ------------------------------------------------------------------
- * CLI CONFIG OVERLAY (prod)
+ * CLI CONFIGURATION (prod)
  * ------------------------------------------------------------------
- * This is the final CLI-specific config layer for the "prod" environment.
+ * The app's cfg for CLI mode in the prod environment.
  *
- * Merge model (last wins):
- *   1) Vendor CLI baseline:   \CitOmni\Cli\Boot\Registry::CFG_CLI
- *   2) Providers:             each CFG_COMMON, then CFG_CLI, in providers.php order
- *   3) App common base:       /config/citomni_cfg.php
- *   4) App CLI base:          /config/citomni_cli_cfg.php
- *   5) App common env:        /config/citomni_cfg.{ENV}.php
- *   6) App CLI env:           /config/citomni_cli_cfg.{ENV}.php    (this file)
+ * Rules:
+ * - Set only the keys where CLI in prod deliberately differs from the
+ *   layers before this file. Prod keys shared with HTTP belong in
+ *   citomni_cfg.prod.php.
+ * - Leave a key out to keep the earlier value. Never write an empty
+ *   array as a placeholder; it replaces the earlier value.
+ * - Comment why a key deviates when the value does not show it. What a
+ *   key means is documented where the key is defined.
  *
- * This file wins over all earlier cfg layers when the resolved {ENV} is "prod".
- *
- * Typical usage:
- *   - Production-only overrides that should not affect dev or stage.
- *   - Conservative hardening of rendering/logging behavior.
- *   - Infrastructure-specific paths or limits, when truly needed.
- *
- * Policy:
- *   - Only put keys here when you intend to override vendor/provider defaults
- *     or your shared app base config.
- *   - Keep this file minimal and deliberate. If production does not need any
- *     special overrides, leave the returned array empty.
- *   - Production overrides shared by HTTP and CLI belong in /config/citomni_cfg.prod.php.
- *
- * Notes:
- *   - CITOMNI_ENVIRONMENT must equal "prod" for this file to load.
- *   - In many apps, production can rely entirely on:
- *       1) vendor/provider baseline
- *       2) /config/citomni_cfg.php and /config/citomni_cli_cfg.php
- *     In that case, this file remains intentionally empty.
- *
- * @internal App-owned overlay: small, deliberate, production-only.
+ * Merge order and file roles: CONFIGURATION.md in this directory and the
+ * citomni/cli README. The keys of citomni/cli and their baseline:
+ * \CitOmni\Cli\Boot\Registry::CFG_CLI.
  * ------------------------------------------------------------------
  */
 return [
-
-	/*
-	 * ------------------------------------------------------------------
-	 * ERROR HANDLER
-	 * ------------------------------------------------------------------
-	 * Production should normally stay quiet in the terminal and rely on logs.
-	 * Uncomment only if production needs behavior different from the baseline
-	 * or from /config/citomni_cli_cfg.php.
-	 */
-
-	/*
-	'error_handler' => [
-		'render' => [
-			'trigger' => 0,
-			'detail' => [
-				'level' => 0,
-			],
-		],
-		'log' => [
-			'trigger'   => E_ALL,
-			'path'      => \CITOMNI_APP_PATH . '/var/logs',
-			'max_bytes' => 2_000_000,
-			'max_files' => 10,
-		],
-	],
-	*/
-
-
-	/*
-	 * ------------------------------------------------------------------
-	 * LOCALE
-	 * ------------------------------------------------------------------
-	 * Normally inherited from /config/citomni_cfg.php. Production locale
-	 * settings shared by HTTP and CLI belong in /config/citomni_cfg.prod.php.
-	 * Uncomment here only if production CLI jobs must deliberately run with
-	 * a different locale or timezone than HTTP.
-	 */
-
-	/*
-	'locale' => [
-		'timezone'   => 'Europe/Copenhagen',
-		'charset'    => 'UTF-8',
-		'icu_locale' => 'da_DK',
-	],
-	*/
-
 
 ];

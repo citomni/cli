@@ -15,23 +15,20 @@ declare(strict_types=1);
 
 /*
  * ------------------------------------------------------------------
- * COMMAND TABLE (STAGING COMMAND OVERRIDES) (CLI)
+ * CLI COMMANDS (stage)
  * ------------------------------------------------------------------
- * This file defines CLI-facing STAGE-env commands for your CitOmni app.
+ * The app's commands in the stage environment.
  *
- * PURPOSE:
- *   - This file is merged LAST into $this->app->commands
- *     when CITOMNI_ENVIRONMENT === 'stage'.
+ * Rules:
+ * - Register here only what must not exist in other environments.
+ *   Commands for every environment belong in citomni_cli_commands.php.
  *
- *   - Keep this as quiet and locked-down as production unless you
- *     explicitly want staging-only operational commands.
- *
- *   - Returning [] means "no staging-specific overrides".
- *     Empty does NOT nuke vendor/provider/base commands.
+ * Merge order, and how a layer changes or removes a command:
+ * CONFIGURATION.md in this directory and the citomni/cli README.
+ * ------------------------------------------------------------------
  */
 return [
 
-	// Example:
 	/*
 	'stage:status' => [
 		'command'     => \App\Cli\Command\StageStatusCommand::class,

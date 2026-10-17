@@ -32,10 +32,8 @@ define('CITOMNI_START_NS', hrtime(true));
  * Switch environments with `citomni-installer environment <dev|stage|prod>`
  * rather than editing this file.
  *
- * The environment is defined before Composer and framework boot because it is
- * used while CitOmni resolves environment-specific configuration and command
- * maps, by framework behavior that distinguishes dev from stage/prod, and as
- * the default --env for cache:warm.
+ * Defined before the autoloader and the kernel, so that everything they load
+ * sees the environment.
  */
 define('CITOMNI_ENVIRONMENT', 'dev');
 
@@ -51,9 +49,8 @@ define('CITOMNI_ENVIRONMENT', 'dev');
  *   Absolute path to the application root (one level above /bin).
  *
  * CITOMNI_PUBLIC_ROOT_URL
- *   Intentionally not defined in dev. CLI has no request to derive it from,
- *   and citomni/installer has no dev root URL placeholder. Code that may run
- *   here must check \defined('CITOMNI_PUBLIC_ROOT_URL') before reading it.
+ *   Not defined in dev: CLI has no request to derive it from. Code that may
+ *   run here must check \defined('CITOMNI_PUBLIC_ROOT_URL') before reading it.
  */
 define('CITOMNI_PUBLIC_PATH', \dirname(__DIR__) . '/public');
 define('CITOMNI_APP_PATH', \dirname(__DIR__));
@@ -73,13 +70,8 @@ require CITOMNI_APP_PATH . '/vendor/autoload.php';
  *---------------------------------------------------------------
  * CLI KERNEL
  *---------------------------------------------------------------
- * The kernel:
- * - Boots the App in CLI mode, loading config, commands, and service definitions.
- * - Installs the CLI error handler when registered.
- * - Applies runtime locale, timezone, and charset configuration.
- * - Dispatches the requested command through the Runner.
- * - Exits with the command's exit code.
- *
- * Keep this entrypoint deterministic and free of application logic.
+ * Hand the process to \CitOmni\Cli\Kernel::run(); its PHPDoc states what boot
+ * does and which exit code the process ends with. Keep this entrypoint
+ * deterministic and free of application logic.
  */
 \CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $_SERVER['argv'] ?? []);

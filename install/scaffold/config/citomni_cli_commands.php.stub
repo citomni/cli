@@ -15,118 +15,28 @@ declare(strict_types=1);
 
 /*
  * ------------------------------------------------------------------
- * COMMAND TABLE (BASE LAYER) (CLI)
+ * CLI COMMANDS
  * ------------------------------------------------------------------
- * This file defines CLI-facing commands for your CitOmni app.
+ * The app's commands in every environment, keyed by command name.
  *
- * RESPONSIBILITY:
- *   - citomni_cli_cfg.php      is for CLI config.
- *   - citomni_cli_commands.php is for commands.
+ * Rules:
+ * - Name a command in lowercase, with its group before a colon, such as
+ *   report:daily.
+ * - Reuse a name that an earlier layer registers only to change that
+ *   command. A new command gets a new name.
+ * - Commands for one environment belong in citomni_cli_commands.{ENV}.php.
  *
- *   The array returned by this file is merged into $this->app->commands at boot.
- *   The Runner uses $this->app->commands to dispatch CLI commands.
- *
- * MERGE MODEL (deterministic "last wins" per command key):
- *   1) Vendor baseline:
- *        \CitOmni\Cli\Boot\Registry::COMMANDS_CLI
- *
- *   2) Provider commands:
- *        Each provider in /config/providers.php may define
- *        public const COMMANDS_CLI = [ ... ];
- *        Providers are processed in the order they appear
- *        in providers.php.
- *
- *   3) /config/citomni_cli_commands.php
- *        (this file)
- *
- *   4) /config/citomni_cli_commands.{ENV}.php
- *        merged last, where {ENV} = CITOMNI_ENVIRONMENT
- *        ('dev' | 'stage' | 'prod')
- *
- * IMPORTANT:
- *   - "Last wins" merges deeply. If several layers define the same
- *     command name (e.g. 'cache:warm'), the later layer overrides the
- *     fields it sets. Fields it leaves out keep the earlier value; set
- *     them to null to clear them. Associative values such as 'options'
- *     merge per key; lists are replaced as a whole.
- *
- *   - This includes the vendor commands. citomni/cli ships 'app:info',
- *     'cache:warm', and 'cache:clear' in every environment. An app layer
- *     that defines one of those keys merges into the vendor definition;
- *     set 'command' to replace the implementation.
- *
- *   - EMPTY ARRAYS ARE SKIPPED:
- *     If this file returns [], the app does NOT treat that as
- *     "wipe all commands". It simply means "no overrides from app base".
- *     Same for providers with COMMANDS_CLI = [] and for the {ENV} file.
- *
- * RUNTIME ACCESS:
- *   - After merge, the final command table lives on the App instance:
- *
- *         $this->app->commands['cache:warm']
- *         $this->app->commands['auth:create-identity']
- *
- * COMMAND NAME CONVENTION:
- *   - Use lowercase identifiers with colon-separated namespaces.
- *   - Examples:
- *       'cache:warm'
- *       'auth:create-identity'
- *       'auth:prune-expired-tokens'
- *
- * COMMAND DEFINITION SHAPE:
- *   'report:daily' => [
- *       'command'     => \App\Cli\Command\DailyReportCommand::class,
- *       'description' => 'Build and send the daily report.',
- *       'options'     => [], // optional, passed to the command constructor
- *   ],
- *
- * CONTRACT:
- *   - 'command' is required and must be a FQCN string.
- *   - The class must extend \CitOmni\Kernel\Command\BaseCommand.
- *   - 'description' is optional but recommended; it is shown by `php bin/citomni list`.
- *   - 'options' is optional and must be an array when present.
- *
- * DEV-ONLY COMMANDS:
- *   - Put debug or maintenance-only commands into
- *     /config/citomni_cli_commands.dev.php
- *     (or .stage.php, etc.). That file is merged LAST, but only if it:
- *       a) exists, and
- *       b) returns a non-empty array.
- *
- *     Typical examples:
- *       'dev:seed'             (load local fixture data)
- *       'debug:test-mail'      (local-only smoke test command)
- *
- *     This avoids shipping development-only command overrides to stage/prod
- *     by accident. Terminal mistakes are still mistakes.
+ * Merge order, and how a layer changes or removes a command:
+ * CONFIGURATION.md in this directory and the citomni/cli README. What an
+ * entry may hold: \CitOmni\Cli\Service\Runner::run().
+ * ------------------------------------------------------------------
  */
 return [
 
-	// -----------------------------------------------------------------
-	// Base app commands
-	// -----------------------------------------------------------------
-
-	// 'app:info', 'cache:warm', and 'cache:clear' come from citomni/cli.
-	// Do not register them here unless you mean to replace them.
-
 	/*
-	'auth:create-identity' => [
-		'command'     => \App\Cli\Command\Auth\CreateIdentityCommand::class,
-		'description' => 'Create a new authentication identity.',
-	],
-	*/
-
-	/*
-	'auth:set-password' => [
-		'command'     => \App\Cli\Command\Auth\SetPasswordCommand::class,
-		'description' => 'Set or replace the password for an identity.',
-	],
-	*/
-
-	/*
-	'auth:prune-expired-tokens' => [
-		'command'     => \App\Cli\Command\Auth\PruneExpiredTokensCommand::class,
-		'description' => 'Delete expired authentication tokens.',
+	'report:daily' => [
+		'command'     => \App\Cli\Command\DailyReportCommand::class,
+		'description' => 'Build and send the daily report.',
 	],
 	*/
 

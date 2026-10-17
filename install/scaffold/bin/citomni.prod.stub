@@ -32,10 +32,8 @@ define('CITOMNI_START_NS', hrtime(true));
  * Switch environments with `citomni-installer environment <dev|stage|prod>`
  * rather than editing this file.
  *
- * The environment is defined before Composer and framework boot because it is
- * used while CitOmni resolves environment-specific configuration and command
- * maps, by framework behavior that distinguishes dev from stage/prod, and as
- * the default --env for cache:warm.
+ * Defined before the autoloader and the kernel, so that everything they load
+ * sees the environment.
  */
 define('CITOMNI_ENVIRONMENT', 'prod');
 
@@ -74,13 +72,8 @@ require CITOMNI_APP_PATH . '/vendor/autoload.php';
  *---------------------------------------------------------------
  * CLI KERNEL
  *---------------------------------------------------------------
- * The kernel:
- * - Boots the App in CLI mode, loading config, commands, and service definitions.
- * - Installs the CLI error handler when registered.
- * - Applies runtime locale, timezone, and charset configuration.
- * - Dispatches the requested command through the Runner.
- * - Exits with the command's exit code.
- *
- * Keep this entrypoint deterministic and free of application logic.
+ * Hand the process to \CitOmni\Cli\Kernel::run(); its PHPDoc states what boot
+ * does and which exit code the process ends with. Keep this entrypoint
+ * deterministic and free of application logic.
  */
 \CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $_SERVER['argv'] ?? []);

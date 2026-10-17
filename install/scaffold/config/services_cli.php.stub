@@ -13,47 +13,20 @@ declare(strict_types=1);
  * please see the LICENSE file distributed with this source code.
  */
 
-/**
- * CLI SERVICE MAP
+/*
  * ------------------------------------------------------------------
- * Deterministic app-level CLI service wiring by id.
+ * CLI SERVICES
+ * ------------------------------------------------------------------
+ * The app's service map for CLI mode, keyed by service id.
  *
- * This file is the app-owned CLI service map and has the highest
- * precedence in CLI mode when service ids collide.
+ * Rules:
+ * - Register only CLI-only services and deliberate CLI overrides of a
+ *   service id. Services shared with HTTP belong in services.php.
+ * - Pure data only: no logic, closures or factories.
  *
- * Contract:
- *   - This file is only loaded in CLI mode.
- *   - Keys are service ids accessed as $this->app->{id}.
- *   - Values may be:
- *       1) FQCN string
- *       2) ['class' => FQCN, 'options' => [...]]
- *   - Services are resolved as singletons per process.
- *   - Service constructors must follow:
- *       new Service(App $app, array $options = []).
- *
- * Effective CLI precedence (services, left wins via PHP array union +):
- *   1) App CLI services: /config/services_cli.php
- *   2) App common services: /config/services.php
- *   3) Provider #N MAP_CLI
- *   4) Provider #N MAP_COMMON
- *   5) Earlier provider service maps, same mode/common pattern
- *   6) Vendor CLI baseline: MAP_CLI from citomni/cli
- *
- *   Providers are read in /config/providers.php order. Within one provider,
- *   MAP_CLI wins over MAP_COMMON; a later provider wins over earlier ones.
- *
- * Policy:
- *   - Keep this file minimal.
- *   - Only declare CLI-only app services or deliberate CLI overrides.
- *   - Put services shared by HTTP and CLI in /config/services.php instead.
- *   - Do not mirror vendor or provider service maps here.
- *   - Keep definitions explicit and deterministic.
- *   - Pure data only. No logic, closures, factories, or side effects.
- *
- * Notes:
- *   - Order inside this array does not matter for resolution.
- *   - Duplicate keys in this file follow normal PHP array rules.
- *   - Invalid service classes or definitions should fail fast by design.
+ * Precedence and file roles: CONFIGURATION.md in this directory and the
+ * citomni/cli README.
+ * ------------------------------------------------------------------
  */
 return [
 

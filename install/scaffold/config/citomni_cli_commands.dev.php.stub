@@ -15,29 +15,21 @@ declare(strict_types=1);
 
 /*
  * ------------------------------------------------------------------
- * COMMAND TABLE (DEVELOPMENT COMMAND OVERRIDES) (CLI)
+ * CLI COMMANDS (dev)
  * ------------------------------------------------------------------
- * This file defines CLI-facing DEV-env commands for your CitOmni app.
+ * The app's commands in the dev environment, such as fixture loaders,
+ * resets of local data and local diagnostics.
  *
- * PURPOSE:
- *   - This file is merged LAST into $this->app->commands
- *     when CITOMNI_ENVIRONMENT === 'dev'.
+ * Rules:
+ * - Register here only what must not exist in other environments.
+ *   Commands for every environment belong in citomni_cli_commands.php.
  *
- *   - Returning an EMPTY ARRAY means:
- *       "No development-only overrides, just use vendor + providers + base commands."
- *
- *   - IMPORTANT:
- *       An empty array does NOT wipe vendor/provider/base commands.
- *       The App kernel will simply skip merging this layer.
- *
- * Typical uses:
- *   - local debug helpers
- *   - destructive resets of local data
- *   - diagnostics you do not want on stage/prod
+ * Merge order, and how a layer changes or removes a command:
+ * CONFIGURATION.md in this directory and the citomni/cli README.
+ * ------------------------------------------------------------------
  */
 return [
 
-	// Example:
 	/*
 	'dev:seed' => [
 		'command'     => \App\Cli\Command\SeedDevDataCommand::class,
