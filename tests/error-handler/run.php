@@ -19,7 +19,7 @@ namespace CitOmni\Cli\Tests\ErrorHandler;
  * Standalone suite for \CitOmni\Cli\Service\ErrorHandler.
  *
  * The handler installs process-wide handlers, and many cases end the process,
- * so every case runs in a fresh `php -n` child process: probe.php, or oom.php
+ * so every case runs in a fresh "php -n" child process: probe.php, or oom.php
  * for the out-of-memory cases. Each child gets its own temporary directory,
  * which is removed again afterwards.
  *
@@ -54,7 +54,7 @@ const LOGGED_ARGV_BYTES = 4_096 + 3;
 
 
 /**
- * A failed expectation, reported as FAIL with its message.
+ * CheckFailed: A failed expectation, reported as FAIL with its message.
  */
 class CheckFailed extends \RuntimeException {
 }
@@ -64,7 +64,14 @@ class CheckFailed extends \RuntimeException {
 // Assertions and formatting
 // ----------------------------------------------------------------
 
-/** Fail the current check with $message unless $condition holds. */
+/**
+ * Fail the current check unless the condition holds.
+ *
+ * @param  bool    $condition  Condition that must hold.
+ * @param  string  $message    Reason reported when it does not.
+ * @return void
+ * @throws \CitOmni\Cli\Tests\ErrorHandler\CheckFailed  When the condition is false.
+ */
 function expect(bool $condition, string $message): void {
 	if (!$condition) {
 		throw new CheckFailed($message);
@@ -72,7 +79,15 @@ function expect(bool $condition, string $message): void {
 }
 
 
-/** Fail the current check unless $actual is identical to $expected. */
+/**
+ * Fail the current check unless a value is identical to the expected one.
+ *
+ * @param  mixed   $expected  Expected value.
+ * @param  mixed   $actual    Actual value.
+ * @param  string  $what      What the value is, named in the failure message.
+ * @return void
+ * @throws \CitOmni\Cli\Tests\ErrorHandler\CheckFailed  When the values are not identical.
+ */
 function same(mixed $expected, mixed $actual, string $what): void {
 	if ($expected !== $actual) {
 		throw new CheckFailed($what . ': expected ' . export($expected) . ', got ' . export($actual));
@@ -80,29 +95,46 @@ function same(mixed $expected, mixed $actual, string $what): void {
 }
 
 
-/** One-line, bounded rendering of a value for failure messages. */
+/**
+ * Render a value on one bounded line for a failure message.
+ *
+ * @param  mixed  $value
+ * @return string  JSON, or var_export() output when the value cannot be encoded.
+ * @see \CitOmni\Cli\Tests\ErrorHandler\squash()  The line and length limit.
+ */
 function export(mixed $value): string {
 	$json = \json_encode($value, \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_INVALID_UTF8_SUBSTITUTE);
 	return squash($json === false ? \var_export($value, true) : $json);
 }
 
 
-/** Collapse line breaks and cap the length, so a message stays on one line. */
+/**
+ * Collapse line breaks and cap the length, so a message stays on one line.
+ *
+ * @param  string  $text
+ * @return string  The text with line breaks as " | ", cut after 400 bytes with "..." appended.
+ */
 function squash(string $text): string {
 	$text = \trim((string)\preg_replace('/\s*\R\s*/', ' | ', $text));
 	return \strlen($text) > 400 ? \substr($text, 0, 400) . '...' : $text;
 }
 
 
-/** Exit code and output of a child process, appended to failure messages. */
+/**
+ * Describe a child process for a failure message: Its exit code and output.
+ *
+ * @param  array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}  $r  Result of runPhp().
+ * @return string  Text to append to a failure message, starting with a space.
+ */
 function describe(array $r): string {
 	return ' [exit ' . $r['exit'] . '; stdout: ' . squash($r['stdout']) . '; stderr: ' . squash($r['stderr']) . ']';
 }
 
 
 /**
- * Error ids printed on stderr, in order.
+ * Return the error ids printed on stderr, in order.
  *
+ * @param  string  $stderr  Stderr of a child process.
  * @return list<string>
  */
 function errorIds(string $stderr): array {
@@ -115,7 +147,11 @@ function errorIds(string $stderr): array {
 // Child processes
 // ----------------------------------------------------------------
 
-/** Create a fresh, uniquely named directory under the system temp dir. */
+/**
+ * Create a fresh, uniquely named directory under the system temp dir.
+ *
+ * @return string  Its path, with a basename that starts with RUN_DIR_PREFIX.
+ */
 function makeRunDir(): string {
 	$dir = \sys_get_temp_dir() . \DIRECTORY_SEPARATOR . RUN_DIR_PREFIX . \bin2hex(\random_bytes(6));
 	\mkdir($dir, 0700);
@@ -123,7 +159,16 @@ function makeRunDir(): string {
 }
 
 
-/** Remove a directory created by makeRunDir(). Any other path is left alone. */
+/**
+ * Remove a directory created by makeRunDir(), with everything in it.
+ *
+ * Behavior:
+ * - Leaves alone a path whose basename does not start with RUN_DIR_PREFIX, and a path that is
+ *   not a directory.
+ *
+ * @param  string  $dir  Path returned by makeRunDir().
+ * @return void
+ */
 function removeRunDir(string $dir): void {
 	if (!\str_starts_with(\basename($dir), RUN_DIR_PREFIX) || !\is_dir($dir)) {
 		return;
@@ -145,14 +190,20 @@ function removeRunDir(string $dir): void {
 
 
 /**
- * Start a PHP child process without waiting. Stdout and stderr go to <tag>.out and <tag>.err in $runDir.
+ * Start a PHP child process without waiting.
  *
- * Every child runs with -n (no php.ini), error_reporting=-1, and log_errors=0. $ini adds -d
- * settings on top. "{dir}" in an argument or an ini value is replaced with $runDir.
+ * Behavior:
+ * - Every child runs with -n (no php.ini), error_reporting=-1 and log_errors=0. $ini adds -d
+ *   settings on top.
+ * - "{dir}" in an argument or an ini value is replaced with $runDir.
+ * - Stdout and stderr go to $tag . '.out' and $tag . '.err' in $runDir.
  *
- * @param  list<string>           $args  Script path and its arguments.
- * @param  array<string, string>  $ini
+ * @param  string                 $runDir  Directory for the output files, from makeRunDir().
+ * @param  string                 $tag     Name of the output files, without the extension.
+ * @param  list<string>           $args    Script path and its arguments.
+ * @param  array<string, string>  $ini     -d settings by name.
  * @return resource  Process handle for proc_close().
+ * @throws \RuntimeException  When the process cannot be started.
  */
 function startPhp(string $runDir, string $tag, array $args, array $ini = []) {
 	$cmd = [\PHP_BINARY, '-n', '-d', 'error_reporting=-1', '-d', 'log_errors=0'];
@@ -180,11 +231,11 @@ function startPhp(string $runDir, string $tag, array $args, array $ini = []) {
 /**
  * Run a PHP child process to completion in its own temporary directory, then collect what it left.
  *
- * The handler under test writes its logs to {dir}/<logs>, and PHP's own error log, when enabled
- * through $ini, is expected at {dir}/php.log.
+ * The handler under test writes its logs to the directory $logs below {dir}, and PHP's own
+ * error log, when enabled through $ini, is expected at {dir}/php.log.
  *
  * @param  list<string>           $args  Script path and its arguments.
- * @param  array<string, string>  $ini
+ * @param  array<string, string>  $ini   -d settings by name.
  * @param  string                 $logs  Name of the log directory below {dir}.
  * @return array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}
  */
@@ -209,9 +260,11 @@ function runPhp(array $args, array $ini = [], string $logs = 'logs'): array {
 
 
 /**
- * Run one probe.php case.
+ * Run one probe.php case, with its logs in {dir}/logs.
  *
- * @param  array<string, string>  $ini
+ * @param  string                 $case  Case name in probe.php.
+ * @param  array<string, string>  $ini   -d settings by name.
+ * @param  string                 $env   CITOMNI_ENVIRONMENT of the child.
  * @return array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}
  */
 function probe(string $case, array $ini = [], string $env = 'dev'): array {
@@ -233,6 +286,8 @@ function fault(string $spec): array {
 /**
  * Run oom.php: fill memory with strings of $bytes until PHP stops with an out-of-memory fatal.
  *
+ * @param  int  $mib        memory_limit of the child, in MiB.
+ * @param  int  $bytes      Length of every string that fills memory.
  * @param  int  $others     -1 for a log directory that does not exist yet; otherwise the shutdown
  *                          log is due for rotation, next to $others files of other logs.
  * @param  int  $argvBytes  Length of an argument oom.php appends to $_SERVER['argv']; 0 for none.
@@ -244,10 +299,15 @@ function oom(int $mib, int $bytes, int $others = -1, int $argvBytes = 0): array 
 
 
 /**
- * Fail unless an out-of-memory run exited 255, reported the fatal on stderr and in the live shutdown
- * log under one error id, and then ran the shutdown function registered after the handler.
+ * Fail unless an out-of-memory run was reported as expected.
  *
+ * The run must have exited 255, reported the fatal on stderr and in the live shutdown log under
+ * one error id, and then run the shutdown function registered after the handler.
+ *
+ * @param  array{exit: int, stdout: string, stderr: string, logs: array<string, list<array<string, mixed>>>, files: list<string>, phpLog: string}  $r  Result of oom().
+ * @param  string  $where  Text appended to each failure message, naming the run.
  * @return array<string, mixed>  The shutdown record.
+ * @throws \CitOmni\Cli\Tests\ErrorHandler\CheckFailed  When the run fails one of these checks.
  */
 function assertOomReported(array $r, string $where): array {
 	same(FATAL_EXIT_STATUS, $r['exit'], 'exit code' . $where . describe($r));
@@ -264,7 +324,7 @@ function assertOomReported(array $r, string $where): array {
 
 
 /**
- * Rotations of cli_err_phperror.jsonl among $files.
+ * Return the rotations of cli_err_phperror.jsonl among file names.
  *
  * @param  list<string>  $files  File names, sorted.
  * @return list<string>
@@ -275,9 +335,11 @@ function rotated(array $files): array {
 
 
 /**
- * Decode every *.jsonl file in a log directory.
+ * Decode every JSONL file in a log directory.
  *
+ * @param  string  $logDir  Log directory; it may not exist.
  * @return array<string, list<array<string, mixed>>>  Records per file name, sorted by file name.
+ * @throws \CitOmni\Cli\Tests\ErrorHandler\CheckFailed  When a line is not JSON.
  */
 function readLogs(string $logDir): array {
 	$logs = [];
@@ -300,7 +362,10 @@ function readLogs(string $logDir): array {
 
 
 /**
- * @return list<string>  File names in $dir, sorted; empty when $dir does not exist.
+ * List the file names in a directory.
+ *
+ * @param  string  $dir  Directory; it may not exist.
+ * @return list<string>  File names, sorted; empty when $dir does not exist.
  */
 function listFiles(string $dir): array {
 	if (!\is_dir($dir)) {

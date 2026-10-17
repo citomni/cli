@@ -160,7 +160,12 @@ require __DIR__ . '/faults.php';
 require __DIR__ . '/../../src/Boot/Registry.php';
 require __DIR__ . '/../../src/Service/ErrorHandler.php';
 
-/** $count valid JSONL records of about 200 bytes each. */
+/**
+ * Build valid JSONL records of about 200 bytes each, to seed a log with.
+ *
+ * @param  int  $count  Number of records.
+ * @return string  The records, each ending with a line feed.
+ */
 function seedLines(int $count): string {
 	$out = '';
 	for ($i = 1; $i <= $count; $i++) {

@@ -47,14 +47,15 @@ require __DIR__ . '/../../src/Boot/Registry.php';
 require __DIR__ . '/../../src/Command/CacheWarmCommand.php';
 require __DIR__ . '/../../src/Command/CacheClearCommand.php';
 
-/** The OPcache note's first line, written to stderr whenever HTTP was warmed or cleared. */
+/** Start of the OPcache note's first line, which the commands write to stderr whenever HTTP was warmed or cleared. */
 const NOTE_START = 'Note: OPcache invalidation from the CLI';
 
+/** Error a command reports when --mode=http finds no citomni/http. */
 const HTTP_MISSING = '--mode=http requires citomni/http, which is not installed.';
 
 
 /**
- * A failed expectation, reported as FAIL with its message.
+ * CheckFailed: A failed expectation, reported as FAIL with its message.
  */
 class CheckFailed extends \RuntimeException {
 }
@@ -64,7 +65,14 @@ class CheckFailed extends \RuntimeException {
 // Assertions and helpers
 // ----------------------------------------------------------------
 
-/** Fail the current check with $message unless $condition holds. */
+/**
+ * Fail the current check unless the condition holds.
+ *
+ * @param  bool    $condition  Condition that must hold.
+ * @param  string  $message    Reason reported when it does not.
+ * @return void
+ * @throws \CitOmni\Cli\Tests\CacheCommands\CheckFailed  When the condition is false.
+ */
 function expect(bool $condition, string $message): void {
 	if (!$condition) {
 		throw new CheckFailed($message);
@@ -72,7 +80,15 @@ function expect(bool $condition, string $message): void {
 }
 
 
-/** Fail the current check unless $actual is identical to $expected. */
+/**
+ * Fail the current check unless a value is identical to the expected one.
+ *
+ * @param  mixed   $expected  Expected value.
+ * @param  mixed   $actual    Actual value.
+ * @param  string  $what      What the value is, named in the failure message.
+ * @return void
+ * @throws \CitOmni\Cli\Tests\CacheCommands\CheckFailed  When the values are not identical.
+ */
 function same(mixed $expected, mixed $actual, string $what): void {
 	if ($expected !== $actual) {
 		throw new CheckFailed($what . ': expected ' . export($expected) . ', got ' . export($actual));
@@ -80,7 +96,12 @@ function same(mixed $expected, mixed $actual, string $what): void {
 }
 
 
-/** One-line rendering of a value for failure messages. */
+/**
+ * Render a value on one line for a failure message.
+ *
+ * @param  mixed  $value
+ * @return string  JSON, or an empty string when the value cannot be encoded.
+ */
 function export(mixed $value): string {
 	return (string)\json_encode($value, \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_INVALID_UTF8_SUBSTITUTE);
 }
@@ -89,6 +110,9 @@ function export(mixed $value): string {
 /**
  * Run a command the way the CLI runner does: a CLI App, the command map name, then run(argv).
  *
+ * @param  class-string  $class  Command class.
+ * @param  string        $name   Command name.
+ * @param  string        ...$args  Tokens after the command name.
  * @return array{exit: int, stdout: list<string>, stderr: list<string>, calls: list<list<mixed>>}
  */
 function runCommand(string $class, string $name, string ...$args): array {
@@ -110,7 +134,10 @@ function runCommand(string $class, string $name, string ...$args): array {
 /**
  * Decode the single JSON document a command printed with --json.
  *
- * @return mixed  Decoded value; objects as arrays unless $assoc is false.
+ * @param  array{exit: int, stdout: list<string>, stderr: list<string>, calls: list<list<mixed>>}  $r  Result of runCommand().
+ * @param  bool  $assoc  Decode objects as arrays.
+ * @return mixed  Decoded value.
+ * @throws \CitOmni\Cli\Tests\CacheCommands\CheckFailed  When stdout does not hold exactly one line.
  */
 function jsonOutput(array $r, bool $assoc = true): mixed {
 	same(1, \count($r['stdout']), 'stdout writes with --json');

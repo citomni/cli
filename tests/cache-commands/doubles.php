@@ -23,16 +23,27 @@ namespace CitOmni\Cli\Tests\CacheCommands;
  */
 
 /**
- * Stand-in for \CitOmni\Kernel\Mode.
+ * ModeDouble: Test double for \CitOmni\Kernel\Mode.
  */
 enum ModeDouble: string {
+
+	/** The App serves HTTP requests. */
 	case HTTP = 'http';
+
+	/** The App runs console commands. */
 	case CLI  = 'cli';
 }
 
 
 /**
- * Stand-in for \CitOmni\Kernel\App: records calls and returns cache paths.
+ * AppDouble: Test double for \CitOmni\Kernel\App that records calls and returns cache paths.
+ *
+ * Lets the suite run the cache commands without an app on disk. A case chooses the results
+ * and failures through the static properties and reads the calls back from $calls.
+ *
+ * Rules:
+ * - Keep the signatures of the kernel App methods, so named arguments resolve the same way.
+ * - Touch no files.
  */
 final class AppDouble {
 
@@ -45,15 +56,35 @@ final class AppDouble {
 	/** @var array<string, \Throwable> Thrown by warmCache() in the given mode. */
 	public static array $warmFailures = [];
 
+	/**
+	 * Record the construction.
+	 *
+	 * @param  string      $configDir  Config directory, returned by getConfigDir().
+	 * @param  ModeDouble  $mode       Mode whose cache paths warmCache() and clearCache() return.
+	 */
 	public function __construct(private string $configDir, private ModeDouble $mode) {
 		self::$calls[] = ['construct', $mode->value, $configDir];
 	}
 
+	/**
+	 * Return the config directory the App was created with.
+	 *
+	 * @return string
+	 */
 	public function getConfigDir(): string {
 		return $this->configDir;
 	}
 
-	/** Same signature as App::warmCache(), so named arguments resolve the same way. */
+	/**
+	 * Record the call and return the cache paths of this App's mode, or throw the failure set for it.
+	 *
+	 * @param  bool         $overwrite          Unused.
+	 * @param  bool         $opcacheInvalidate  Unused.
+	 * @param  string|null  $env                Recorded with the call.
+	 * @return array{cfg: string, dispatch: string, services: string}
+	 * @throws \Throwable  The failure in $warmFailures for this App's mode.
+	 * @see \CitOmni\Kernel\App::warmCache()  The signature this mirrors.
+	 */
 	public function warmCache(bool $overwrite = true, bool $opcacheInvalidate = true, ?string $env = null): array {
 		self::$calls[] = ['warm', $this->mode->value, $env];
 		if (isset(self::$warmFailures[$this->mode->value])) {
@@ -62,7 +93,13 @@ final class AppDouble {
 		return self::paths($this->mode->value);
 	}
 
-	/** Same signature as App::clearCache(). */
+	/**
+	 * Record the call and return the result set for this App's mode, or all its cache paths.
+	 *
+	 * @param  bool  $opcacheInvalidate  Unused.
+	 * @return array<string, ?string>
+	 * @see \CitOmni\Kernel\App::clearCache()  The signature this mirrors.
+	 */
 	public function clearCache(bool $opcacheInvalidate = true): array {
 		self::$calls[] = ['clear', $this->mode->value];
 		return self::$clearResults[$this->mode->value] ?? self::paths($this->mode->value);
@@ -71,6 +108,7 @@ final class AppDouble {
 	/**
 	 * Cache file paths for one mode, keyed like the result of App::warmCache().
 	 *
+	 * @param  string  $mode  'cli' or 'http'.
 	 * @return array{cfg: string, dispatch: string, services: string}
 	 */
 	public static function paths(string $mode): array {
@@ -82,6 +120,11 @@ final class AppDouble {
 		];
 	}
 
+	/**
+	 * Forget the recorded calls and the results and failures a case has set.
+	 *
+	 * @return void
+	 */
 	public static function reset(): void {
 		self::$calls        = [];
 		self::$clearResults = [];
@@ -91,17 +134,26 @@ final class AppDouble {
 
 
 /**
- * Stand-in for \CitOmni\Kernel\Command\BaseCommand.
+ * BaseCommandDouble: Test double for \CitOmni\Kernel\Command\BaseCommand.
  *
- * Same constructor, constants, and the accessors and IO helpers the cache commands use.
- * run() understands only what those commands receive: --name=value, --flag, and -x for
- * bool options, plus signature defaults. It does not validate 'allowed' values; that is
- * ArgvParser's job, tested in citomni/kernel.
+ * Gives the cache commands the constructor, constants, accessors and IO helpers they use, and
+ * captures their output instead of writing it. Validating 'allowed' values belongs to the
+ * kernel's ArgvParser.
+ *
+ * Rules:
+ * - Mirror the kernel base wherever the cache commands can tell.
+ * - Throw \LogicException on input the cache commands never receive, so a wrong case fails
+ *   instead of passing on a parse the kernel would not make.
  */
 abstract class BaseCommandDouble {
 
+	/** Exit code: The command did what it was asked to do. */
 	public const SUCCESS = 0;
+
+	/** Exit code: A failure that the command handles. */
 	public const FAILURE = 1;
+
+	/** Exit code: A usage error. */
 	public const USAGE   = 2;
 
 	/** @var list<string> Lines written to stdout. */
@@ -110,12 +162,30 @@ abstract class BaseCommandDouble {
 	/** @var list<string> Lines written to stderr. */
 	public array $stderrLines = [];
 
+	/** The App double the command works with. */
 	protected AppDouble $app;
+
+	/** Command name as the case registers it. */
 	protected string $commandName;
+
+	/** Command description as the case registers it. */
 	protected string $commandDescription;
+
+	/** @var array<string,mixed> Options of the command map entry. */
 	protected array $options;
+
+	/** @var array<string,mixed> Parsed options by name; empty until run() has parsed argv. */
 	private array $parsedOpts = [];
 
+	/**
+	 * Keep the App double and the command map entry.
+	 *
+	 * @param  AppDouble            $app                 App double.
+	 * @param  string               $commandName         Command name.
+	 * @param  string               $commandDescription  Command description.
+	 * @param  array<string,mixed>  $options             Options of the command map entry.
+	 * @see \CitOmni\Kernel\Command\BaseCommand::__construct()  The constructor this mirrors.
+	 */
 	public function __construct(AppDouble $app, string $commandName, string $commandDescription, array $options = []) {
 		$this->app = $app;
 		$this->commandName = $commandName;
@@ -128,22 +198,47 @@ abstract class BaseCommandDouble {
 	 *
 	 * @param  list<string>  $argv  Full argv: binary, command name, then the tokens.
 	 * @return int  Exit code from execute().
+	 * @throws \LogicException  On a token that parse() does not support.
 	 */
 	final public function run(array $argv = []): int {
 		$this->parsedOpts = self::parse(\array_slice($argv, 2), $this->signature()['options'] ?? []);
 		return $this->execute();
 	}
 
+	/**
+	 * Declare the command interface; none by default.
+	 *
+	 * @return array<string,array<string,array<string,mixed>>>
+	 */
 	protected function signature(): array {
 		return [];
 	}
 
+	/**
+	 * Run the command and return its exit code.
+	 *
+	 * @return int
+	 */
 	abstract protected function execute(): int;
 
+	/**
+	 * Get an option value (raw).
+	 *
+	 * @param  string  $name     Option name as declared in signature().
+	 * @param  mixed   $default  Returned when the parsed options have no entry for $name.
+	 * @return mixed
+	 */
 	protected function opt(string $name, mixed $default = null): mixed {
 		return \array_key_exists($name, $this->parsedOpts) ? $this->parsedOpts[$name] : $default;
 	}
 
+	/**
+	 * Get an option as string.
+	 *
+	 * @param  string  $name  Option name as declared in signature().
+	 * @return string
+	 * @throws \RuntimeException  When the value is null.
+	 */
 	protected function getString(string $name): string {
 		$v = $this->opt($name);
 		if ($v === null) {
@@ -152,6 +247,13 @@ abstract class BaseCommandDouble {
 		return (string)$v;
 	}
 
+	/**
+	 * Get an option as bool.
+	 *
+	 * @param  string  $name  Option name as declared in signature().
+	 * @return bool
+	 * @throws \RuntimeException  When the value is null.
+	 */
 	protected function getBool(string $name): bool {
 		$v = $this->opt($name);
 		if ($v === null) {
@@ -160,24 +262,52 @@ abstract class BaseCommandDouble {
 		return (bool)$v;
 	}
 
+	/**
+	 * Capture a line written to stdout.
+	 *
+	 * @param  string  $line  Text without the line ending.
+	 * @return void
+	 */
 	protected function stdout(string $line): void {
 		$this->stdoutLines[] = $line;
 	}
 
+	/**
+	 * Capture a line written to stderr.
+	 *
+	 * @param  string  $line  Text without the line ending.
+	 * @return void
+	 */
 	protected function stderr(string $line): void {
 		$this->stderrLines[] = $line;
 	}
 
+	/**
+	 * Capture a warning as a stderr line, without colors.
+	 *
+	 * @param  string  $message  Text without the line ending.
+	 * @return void
+	 */
 	protected function warning(string $message): void {
 		$this->stderr($message);
 	}
 
+	/**
+	 * Capture an error as a stderr line, without colors.
+	 *
+	 * @param  string  $message  Text without the line ending.
+	 * @return void
+	 */
 	protected function error(string $message): void {
 		$this->stderr($message);
 	}
 
 	/**
 	 * Resolve option tokens against the signature's option definitions.
+	 *
+	 * Behavior:
+	 * - Understands only what the cache commands receive: --name=value, --flag, and -x for bool
+	 *   options, plus signature defaults.
 	 *
 	 * @param  list<string>                 $tokens  Tokens after the command name.
 	 * @param  array<string, array<mixed>>  $defs    Option definitions from signature().
@@ -222,10 +352,17 @@ abstract class BaseCommandDouble {
 
 
 /**
- * Stand-in for \CitOmni\Kernel\Command\HelpFormatter.
+ * HelpFormatterDouble: Test double for \CitOmni\Kernel\Command\HelpFormatter.
  */
 final class HelpFormatterDouble {
 
+	/**
+	 * Return a fixed usage line with the command name.
+	 *
+	 * @param  string                $commandName  Command name.
+	 * @param  array<string, mixed>  $signature    Unused.
+	 * @return string
+	 */
 	public static function usage(string $commandName, array $signature): string {
 		return 'Usage: ' . $commandName . ' [options]';
 	}
@@ -233,8 +370,13 @@ final class HelpFormatterDouble {
 
 
 /**
- * Stand-in for \CitOmni\Http\Boot\Registry. run.php aliases it only for the checks
- * that need citomni/http installed, since an alias cannot be removed again.
+ * HttpRegistryDouble: Test double for \CitOmni\Http\Boot\Registry.
+ *
+ * Its presence under that name means citomni/http is installed.
+ *
+ * Rules:
+ * - Alias it only for the checks that need citomni/http, after the others: An alias cannot be
+ *   removed again.
  */
 class HttpRegistryDouble {
 }

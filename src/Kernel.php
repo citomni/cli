@@ -20,79 +20,54 @@ use CitOmni\Kernel\Mode;
 use CitOmni\Kernel\Runtime;
 
 /**
- * CLI application kernel - boot and dispatch for command-line entry points.
+ * Kernel: CLI entry point that boots the App in CLI mode and runs one command.
  *
- * This is the CLI counterpart to \CitOmni\Http\Kernel. Both are thin
- * adapters: they construct the shared App core, apply mode-specific
- * runtime concerns, and hand off to the appropriate dispatcher.
+ * Turns a config directory and the process argv into a finished CLI process, for entry scripts
+ * and for other scripts that only need a booted App. It owns the boot order and the process
+ * exit code. Building cfg, commands and services belongs to App, the process-wide runtime
+ * settings to Runtime, reporting failures to the errorHandler service and running the command
+ * to the runner service. HTTP concerns stay out of CLI boot: No output buffering, no
+ * maintenance guard, no public root URL and no trusted proxies.
  *
- * Boot pipeline:
- *   bin/citomni -> Cli\Kernel::run($configDir, $argv)
- *     -> boot($configDir) -> new App($configDir, Mode::CLI)
- *     -> CLI error handler install (when available)
- *     -> Runtime::configure($app->cfg)  (timezone, charset, ICU best-effort)
- *     -> $app->runner->run($argv)       (command dispatch)
- *
- * Differences from Http\Kernel:
- * - No output buffering (CLI output is unbuffered by convention).
- * - No maintenance mode guard (maintenance is an HTTP concern).
- * - No CITOMNI_PUBLIC_ROOT_URL resolution (no web root in CLI).
- * - No trusted proxy configuration (no HTTP transport).
- * - No hard intl requirement (simple CLI commands may not need it;
- *   services that require intl will fail at point of use).
- * - Exit code propagation: run() terminates with the command's exit code.
- *
- * Typical entry point (bin/citomni):
- *   #!/usr/bin/env php
- *   <?php
- *   declare(strict_types=1);
- *   define('CITOMNI_ENVIRONMENT', 'dev');
- *   define('CITOMNI_APP_PATH', dirname(__DIR__));
- *   require CITOMNI_APP_PATH . '/vendor/autoload.php';
- *   \CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $argv);
- *
- * Manual boot (tests / scripts):
- *   $app = \CitOmni\Cli\Kernel::boot(__DIR__ . '/config');
- *   // Use $app->commands, $app->cfg, etc. without dispatching.
+ * Rules:
+ * - Install the error handler as soon as the App exists, before any other boot step that can
+ *   fail.
+ * - End the process only in run(); boot() returns to its caller.
  */
 class Kernel {
 
 
 	/**
-	 * Boot the CLI application without dispatching.
+	 * Boot the App in CLI mode without running a command.
 	 *
-	 * Constructs the App in CLI mode, installs the CLI error handler when
-	 * registered, and applies shared runtime configuration (timezone, charset,
-	 * ICU locale). Returns the fully configured App instance.
+	 * Builds the App and makes the process ready for commands: From then on failures reach the
+	 * CLI error handler when the App registers one, and PHP's timezone and charset, and with
+	 * intl the ICU locale, follow the App's cfg.
 	 *
 	 * Behavior:
-	 * - The CLI error handler is installed before runtime configuration, in the
-	 *   same order as Http\Kernel. An uncaught exception from Runtime::configure()
-	 *   is therefore logged to cli_err_exception.jsonl, rendered to stderr, and
-	 *   ends the process with exit code 1.
-	 * - The handler is installed only when the errorHandler service is registered.
-	 * - Runtime::configure() sets timezone and charset (fail-fast on invalid
-	 *   values) and ICU locale (best-effort; skipped if intl is absent).
+	 * - Installs the errorHandler service when one is registered, before the runtime settings
+	 *   are applied, so the handler reports a failure there.
+	 * - A failure while the App is built (cfg, command map, service map) happens before any
+	 *   handler exists and is left to PHP.
+	 * - Does not require the intl extension.
 	 *
-	 * Notes:
-	 * - Failures inside the App constructor (loading config, the command map, or
-	 *   the service map) happen before the handler exists and are left to PHP.
+	 * Typical usage:
+	 *   $app = \CitOmni\Cli\Kernel::boot(CITOMNI_APP_PATH . '/config');
 	 *
-	 * @param  string  $configDir  Absolute path to the application's /config directory.
-	 * @return App  Fully configured application instance in CLI mode.
-	 * @throws \RuntimeException  On a missing config directory or invalid runtime configuration.
+	 * @param  string  $configDir  Absolute path to the app's config directory.
+	 * @return App  The App in CLI mode.
+	 * @throws \RuntimeException  When the App cannot be built from $configDir, or its cfg holds an invalid timezone, charset or ICU locale.
+	 * @see \CitOmni\Kernel\Runtime::configure()  The runtime settings and how they fail.
+	 * @see \CitOmni\Cli\Service\ErrorHandler::install()  What the installed handler takes over.
 	 */
 	public static function boot(string $configDir): App {
 		$app = new App($configDir, Mode::CLI);
 
-		// CLI error handler - installed first, so failures in the runtime
-		// configuration below are logged and rendered by it.
+		// Installed first, so the handler reports a failure in the runtime settings below.
 		if ($app->hasService('errorHandler')) {
 			$app->errorHandler->install();
 		}
 
-		// Shared runtime configuration (timezone, charset, ICU best-effort).
-		// Throws \RuntimeException on invalid values.
 		Runtime::configure($app->cfg);
 
 		return $app;
@@ -100,15 +75,16 @@ class Kernel {
 
 
 	/**
-	 * Boot and dispatch a CLI command from argv.
+	 * Boot the App, run the command that argv names and end the process with its exit code.
 	 *
-	 * This is the primary entry point for bin/citomni. It boots the
-	 * application, dispatches the command via the Runner service, and
-	 * terminates with the command's exit code.
+	 * Typical usage:
+	 *   \CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $_SERVER['argv'] ?? []);
 	 *
-	 * @param  string  $configDir  Absolute path to the application's /config directory.
-	 * @param  array   $argv       Raw CLI arguments (typically $argv from PHP).
+	 * @param  string        $configDir  Absolute path to the app's config directory.
+	 * @param  list<string>  $argv       The process argv: script, command name, then the command's arguments.
 	 * @return never
+	 * @throws \RuntimeException  When boot() fails, or the runner rejects the command's entry in the command map.
+	 * @see \CitOmni\Cli\Service\Runner::run()  How argv selects the command, and the exit code it returns.
 	 */
 	public static function run(string $configDir, array $argv): never {
 		$app = self::boot($configDir);

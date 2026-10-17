@@ -19,21 +19,24 @@ use CitOmni\Kernel\Command\BaseCommand;
 use CitOmni\Kernel\Support\AppInfo;
 
 /**
- * Expose the shared Kernel AppInfo snapshot through the CLI.
+ * AppInfoCommand: CLI adapter that prints the AppInfo snapshot of the app.
  *
- * AppInfo owns application and runtime introspection. This Command owns only
- * CLI options and terminal presentation. Output is secret-masked by default;
- * --raw requests unredacted configuration, --env-configs requests fresh
- * environment configuration projections, and --json emits the AppInfo
- * snapshot directly for machine consumption.
+ * Lets operators and scripts inspect the app's configuration, dispatch maps, packages and PHP
+ * runtime from the terminal. Collecting the snapshot and masking its secrets belong to AppInfo;
+ * this command turns the options into AppInfo's arguments and presents the result.
+ *
+ * Rules:
+ * - Print only what AppInfo::snapshot() returns; collect nothing itself.
+ * - With --json, write the snapshot as one JSON document to stdout, and nothing else.
  */
 class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Define the command options.
+	 * Declare the command interface.
 	 *
-	 * @return array<string, mixed> Command signature.
+	 * @return array<string,array<string,array<string,mixed>>>
+	 * @see \CitOmni\Kernel\Command\BaseCommand::signature()  The signature format.
 	 */
 	protected function signature(): array {
 		return [
@@ -60,9 +63,19 @@ class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Emit the AppInfo snapshot in JSON or human-readable form.
+	 * Print the AppInfo snapshot as JSON or as sections for a person.
 	 *
-	 * @return int Command exit code.
+	 * Behavior:
+	 * - Cfg values that AppInfo treats as secret are masked, unless --raw is given.
+	 * - --env-configs adds the cfg that dev, stage and prod would get, built now in this process.
+	 * - With --json: The snapshot as one pretty-printed JSON document on stdout.
+	 * - Otherwise: The scalar sections as aligned label and value lines, the structured sections
+	 *   as pretty-printed JSON, each under its title.
+	 * - Exit code 0.
+	 *
+	 * @return int  Process exit code.
+	 * @throws \RuntimeException  With --env-configs, when the cfg of an environment cannot be built.
+	 * @see \CitOmni\Kernel\Support\AppInfo::snapshot()  The snapshot, its masking and the environment cfg.
 	 */
 	protected function execute(): int {
 		$json = $this->getBool('json');
@@ -87,9 +100,9 @@ class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Render the snapshot for terminal inspection.
+	 * Print the snapshot as titled sections.
 	 *
-	 * @param array<string, mixed> $snapshot AppInfo snapshot.
+	 * @param  array<string,mixed>  $snapshot  The result of AppInfo::snapshot().
 	 * @return void
 	 */
 	private function renderHuman(array $snapshot): void {
@@ -134,9 +147,10 @@ class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Write a compact scalar section.
+	 * Print a section of scalar values, one aligned label and value per line.
 	 *
-	 * @param array<string, mixed> $rows Label-value rows.
+	 * @param  string               $title  Section title.
+	 * @param  array<string,mixed>  $rows   Values by label.
 	 * @return void
 	 */
 	private function writeScalarSection(string $title, array $rows): void {
@@ -156,9 +170,10 @@ class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Write a structured section as readable JSON.
+	 * Print a section of structured data as pretty-printed JSON.
 	 *
-	 * @param array<mixed> $data Structured snapshot data.
+	 * @param  string        $title  Section title.
+	 * @param  array<mixed>  $data   Structured snapshot data.
 	 * @return void
 	 */
 	private function writeJsonSection(string $title, array $data): void {
@@ -169,11 +184,10 @@ class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Encode snapshot data consistently and fail on encoding errors.
+	 * Encode snapshot data as pretty-printed JSON, with slashes and Unicode unescaped.
 	 *
-	 * @param array<mixed> $data Snapshot data.
-	 * @return string Encoded JSON.
-	 * @throws \JsonException When the data cannot be encoded.
+	 * @param  array<mixed>  $data  Snapshot data.
+	 * @return string
 	 */
 	private function encodeJson(array $data): string {
 		return \json_encode(
@@ -187,10 +201,10 @@ class AppInfoCommand extends BaseCommand {
 
 
 	/**
-	 * Format a scalar snapshot value for human-readable output.
+	 * Format a scalar snapshot value for a person: null and booleans as words, the rest as strings.
 	 *
-	 * @param mixed $value Snapshot value.
-	 * @return string Readable scalar value.
+	 * @param  mixed  $value  Scalar snapshot value.
+	 * @return string
 	 */
 	private function formatScalar(mixed $value): string {
 		if ($value === null) {

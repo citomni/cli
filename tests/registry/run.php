@@ -44,6 +44,20 @@ require \dirname(__DIR__, 2) . '/src/Boot/Registry.php';
 $passed  = 0;
 $failed  = 0;
 
+/**
+ * Run one check and report it.
+ *
+ * Behavior:
+ * - A PASS line with the check name on stdout, and one more in the global $passed, when the
+ *   check returns.
+ * - A FAIL line with the check name and the message on stderr, and one more in the global
+ *   $failed, when it throws.
+ * - Returns in both cases.
+ *
+ * @param  string    $name  Check name, shown in the report.
+ * @param  callable  $test  The check.
+ * @return void
+ */
 function check(string $name, callable $test): void {
 	global $passed, $failed;
 	try {
@@ -56,6 +70,14 @@ function check(string $name, callable $test): void {
 	}
 }
 
+/**
+ * Fail the current check unless the condition holds.
+ *
+ * @param  bool    $condition  Condition that must hold.
+ * @param  string  $message    Reason reported when it does not.
+ * @return void
+ * @throws \RuntimeException  When the condition is false.
+ */
 function ok(bool $condition, string $message): void {
 	if (!$condition) {
 		throw new \RuntimeException($message);
@@ -184,10 +206,7 @@ function scanCfgReads(string $srcDir): array {
 }
 
 /**
- * Whether the package owns a cfg path.
- *
- * Notes:
- * - A root in CFG_CLI belongs to the package; error_handler is the only one.
+ * Tell whether the package owns a cfg path: Its root is a root of CFG_CLI.
  *
  * @param  string  $path  Dotted cfg path.
  * @return bool
@@ -196,7 +215,13 @@ function ownedPath(string $path): bool {
 	return \array_key_exists(\explode('.', $path)[0], Registry::CFG_CLI);
 }
 
-/** True when $path (dot-separated) names a key in $cfg. */
+/**
+ * Tell whether a dotted path names a key in a cfg array.
+ *
+ * @param  array<string,mixed>  $cfg   Cfg array, such as Registry::CFG_CLI.
+ * @param  string               $path  Dotted cfg path.
+ * @return bool
+ */
 function cfgHasPath(array $cfg, string $path): bool {
 	foreach (\explode('.', $path) as $key) {
 		if (!\is_array($cfg) || !\array_key_exists($key, $cfg)) {
@@ -207,7 +232,12 @@ function cfgHasPath(array $cfg, string $path): bool {
 	return true;
 }
 
-/** Format a read as file:line path for a report. */
+/**
+ * Format a read for a report: file:line, then the path.
+ *
+ * @param  array{file: string, line: int, path: string, guarded: bool, array: bool}  $read  One row of scanCfgReads().
+ * @return string
+ */
 function describe(array $read): string {
 	return $read['file'] . ':' . $read['line'] . ' ' . ($read['path'] !== '' ? $read['path'] : '(cfg root)');
 }

@@ -21,46 +21,23 @@ use CitOmni\Kernel\Command\HelpFormatter;
 use CitOmni\Kernel\Mode;
 
 /**
- * Build and write the compiled config, dispatch, and service caches.
+ * CacheWarmCommand: CLI adapter that writes the compiled caches of the app.
  *
- * CLI adapter over App::warmCache() for deploy scripts. The CLI cache is
- * warmed through the running CLI App. The HTTP cache is warmed through a
- * second App constructed in Mode::HTTP from the same config directory, so it
- * can be built without a web request.
+ * Gives deploy scripts a way to build the caches of both modes before the app serves anything,
+ * the HTTP cache included, without a web request. Building and writing the files of a mode
+ * belongs to App::warmCache(); this command chooses the modes and the environment, creates the
+ * HTTP App it needs and reports the result.
  *
- * Behavior:
- * - --mode=cli writes cfg.cli.php, commands.cli.php, and services.cli.php.
- * - --mode=http writes cfg.http.php, routes.http.php, and services.http.php.
- *   It requires citomni/http (\CitOmni\Http\Boot\Registry); without it the
- *   command returns FAILURE.
- * - --mode=all (default) warms CLI first, then HTTP when citomni/http is
- *   installed. Otherwise HTTP is reported as skipped.
- * - --env is passed to App::warmCache(env: ...). Without it the target is
- *   CITOMNI_ENVIRONMENT (default "prod"). An empty value is a usage error,
- *   because it would build the cache without any env overlay.
- * - Prints the written files per mode on stdout. With --json it prints one
- *   object instead: {ok, env, modes: {cli: {...}, http: {...} | "skipped"}}.
- * - Writes a fixed OPcache note to stderr whenever the HTTP cache is warmed.
- *
- * Notes:
- * - Exceptions from App construction and warmCache() are not caught; the CLI
- *   error handler renders them and exits 1. With --mode=all, a CLI cache
- *   warmed before an HTTP failure stays written.
- * - Building the HTTP App evaluates the app's HTTP config files in this CLI
- *   process. A file that references \CITOMNI_PUBLIC_ROOT_URL fails fast in
- *   dev, where bin/citomni does not define it. Without an HTTP cache, the
- *   constructor first builds config for CITOMNI_ENVIRONMENT, so this applies
- *   to that overlay even when --env names another environment.
- * - Cfg values derived from CITOMNI_APP_PATH are written into the cache as
- *   literal paths. Warm the cache on the host and at the path the app runs.
- *
- * Typical usage:
- *   php bin/citomni cache:warm
- *   php bin/citomni cache:warm --env=prod --json
+ * Rules:
+ * - Warm a mode only through App::warmCache() of an App in that mode.
+ * - Catch no exception from App: A cache that cannot be built or written must fail the
+ *   process, never be reported as warmed.
+ * - With --json, write exactly one JSON document to stdout, and nothing else, before execute()
+ *   returns SUCCESS or FAILURE.
  */
 class CacheWarmCommand extends BaseCommand {
 
-	/** Written to stderr whenever the HTTP cache was warmed. */
+	/** Lines written to stderr after every warm of the HTTP cache. */
 	private const OPCACHE_NOTE = [
 		'Note: OPcache invalidation from the CLI does not reach the web server\'s OPcache (PHP-FPM, mod_php).',
 		'With opcache.validate_timestamps=0, reload PHP-FPM or the web server so it loads the new HTTP cache files,',
@@ -69,9 +46,10 @@ class CacheWarmCommand extends BaseCommand {
 
 
 	/**
-	 * Define the command options.
+	 * Declare the command interface.
 	 *
-	 * @return array<string, mixed> Command signature.
+	 * @return array<string,array<string,array<string,mixed>>>
+	 * @see \CitOmni\Kernel\Command\BaseCommand::signature()  The signature format.
 	 */
 	protected function signature(): array {
 		return [
@@ -98,9 +76,40 @@ class CacheWarmCommand extends BaseCommand {
 
 
 	/**
-	 * Warm the selected caches and report the written files.
+	 * Warm the caches of the chosen modes and report the written files.
 	 *
-	 * @return int Command exit code.
+	 * Warms the CLI cache through the running App and the HTTP cache through a second App in
+	 * Mode::HTTP from the same config directory.
+	 *
+	 * Behavior:
+	 * - --mode=all, the default, warms CLI and then HTTP. Without citomni/http, HTTP is
+	 *   reported as skipped.
+	 * - --mode=http without citomni/http writes nothing and fails.
+	 * - --env names the environment that cfg and the dispatch map are built for. Without it, the
+	 *   target is CITOMNI_ENVIRONMENT, or prod when that is not defined.
+	 * - --env with an empty value is a usage error and writes nothing, because it would build
+	 *   the cache without any environment overlay.
+	 * - Prints the written files per mode on stdout, under the target environment. With
+	 *   --json, one JSON object instead:
+	 *     - ok true, env and modes, with the result of App::warmCache() per warmed mode, or
+	 *       "skipped" for HTTP.
+	 *     - ok false, error and an empty modes object when --mode=http finds no citomni/http.
+	 *       The error also goes to stderr.
+	 * - Writes OPCACHE_NOTE to stderr whenever the HTTP cache was warmed.
+	 * - Exit code 0, 1 when --mode=http finds no citomni/http, or 2 for an empty --env.
+	 *
+	 * Notes:
+	 * - An exception from App ends the process with no JSON document on stdout.
+	 * - With --mode=all, a CLI cache warmed before the HTTP cache fails stays written.
+	 * - Warming HTTP evaluates the app's HTTP config files in this CLI process: For the target
+	 *   environment, and first for CITOMNI_ENVIRONMENT when no HTTP cache exists. A file that
+	 *   reads CITOMNI_PUBLIC_ROOT_URL fails unless the CLI entry point defines it.
+	 * - Cfg values derived from CITOMNI_APP_PATH are written into the cache as literal paths.
+	 *   Warm the cache on the host, and at the path, where the app runs.
+	 *
+	 * @return int  Process exit code.
+	 * @throws \RuntimeException  When an App cannot be built from the config directory, the caches for the target environment cannot be built, or a cache file cannot be written.
+	 * @see \CitOmni\Kernel\App::warmCache()  Which files a mode has, and how they are written.
 	 */
 	protected function execute(): int {
 		$mode = $this->getString('mode');
@@ -126,7 +135,8 @@ class CacheWarmCommand extends BaseCommand {
 			return self::FAILURE;
 		}
 
-		// Same fallback as App::buildConfig(); reported so the log shows the target.
+		// Assumes the fallback of App::buildConfig() for a null env. Only reported, so the
+		// output names the target; warmCache() still gets $env.
 		$targetEnv = $env ?? (\defined('CITOMNI_ENVIRONMENT') ? (string)\CITOMNI_ENVIRONMENT : 'prod');
 		$modes     = [];
 
@@ -186,11 +196,10 @@ class CacheWarmCommand extends BaseCommand {
 
 
 	/**
-	 * Encode a result object and fail on encoding errors.
+	 * Encode a result as pretty-printed JSON, with slashes and Unicode unescaped.
 	 *
 	 * @param  array<string, mixed>  $data  Result data.
-	 * @return string  Encoded JSON.
-	 * @throws \JsonException  When the data cannot be encoded.
+	 * @return string
 	 */
 	private function encodeJson(array $data): string {
 		return \json_encode(

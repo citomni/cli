@@ -79,7 +79,7 @@ foreach ($suites as $i => $script) {
 	// Stdout is piped so the summary line can be read; stderr goes straight through.
 	// It is passed as a fresh php://stderr, not as STDERR: proc_open() first seeks a
 	// stream to the position PHP recorded for it, 0 for an unused STDERR, which would
-	// rewind out.txt in `php tests/run.php > out.txt 2>&1`.
+	// rewind out.txt in "php tests/run.php > out.txt 2>&1".
 	$proc = \proc_open([\PHP_BINARY, ...$iniArgs, $script], [
 		0 => ['pipe', 'r'],
 		1 => ['pipe', 'w'],

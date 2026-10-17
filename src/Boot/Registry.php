@@ -15,29 +15,23 @@ declare(strict_types=1);
 
 namespace CitOmni\Cli\Boot;
 
+/**
+ * Registry: Boot contributions of citomni/cli, the CLI mode package.
+ *
+ * Declares the baseline that every CLI app starts from as constant arrays: services, cfg and
+ * commands. Merging them with the providers' and the app's own maps, and deciding what wins,
+ * belongs to the kernel.
+ *
+ * Rules:
+ * - Constants only: No IO, no runtime branching and no environment reads.
+ * - Ship a baseline for every cfg path the package reads, with a comment on what each key
+ *   controls and its unit.
+ * - Ship defaults that are safe in every environment. Output meant for developers stays off
+ *   until the app turns it on.
+ */
 class Registry {
-	
-	/**
-	 * Vendor baseline service map for CLI mode.
-	 *
-	 * Behavior:
-	 * - This is tier 1 in the deterministic CLI service map merge:
-	 *   1) Vendor baseline: \CitOmni\Cli\Boot\Registry::MAP_CLI
-	 *   2) Providers: /config/providers.php (MAP_COMMON, then MAP_CLI)
-	 *   3) App common map: /config/services.php
-	 *   4) App CLI map: /config/services_cli.php
-	 * - Service merge semantics use PHP array union (`+`) with each later
-	 *   source placed on the left, so later sources override earlier sources.
-	 *
-	 * Notes:
-	 * - Service IDs are resolved via $this->app->{id}.
-	 * - Services are instantiated lazily and kept as singletons per process.
-	 * - Definitions must be either:
-	 *   - 'id' => FQCN
-	 *   - 'id' => ['class' => FQCN, 'options' => [...]]
-	 * - /config/services_cli.php has highest precedence in CLI mode, followed by
-	 *   /config/services.php, providers, and the vendor baseline.
-	 */
+
+	/** Services for CLI mode. */
 	public const array MAP_CLI = [
 		'runner' => \CitOmni\Cli\Service\Runner::class,
 		'errorHandler' => \CitOmni\Cli\Service\ErrorHandler::class,
@@ -48,71 +42,29 @@ class Registry {
 
 
 
-	/**
-	 * Vendor baseline configuration for CLI mode.
-	 *
-	 * Behavior:
-	 * - This is tier 1 in the deterministic CLI config merge:
-	 *   1) Vendor baseline: \CitOmni\Cli\Boot\Registry::CFG_CLI
-	 *   2) Providers: /config/providers.php (CFG_COMMON, then CFG_CLI)
-	 *   3) App common: /config/citomni_cfg.php
-	 *   4) App CLI: /config/citomni_cli_cfg.php
-	 *   5) App common env: /config/citomni_cfg.{ENV}.php
-	 *   6) App CLI env: /config/citomni_cli_cfg.{ENV}.php
-	 * - Config merge semantics are deep associative merge with last wins.
-	 *
-	 * Notes:
-	 * - The baseline must contain the stable top-level CLI config tree expected by
-	 *   CitOmni\Cli services and commands.
-	 * - CITOMNI_APP_PATH must be defined before boot.
-	 * - Providers may extend or override this baseline, and the application layer
-	 *   remains the final authority.
-	 */
+	/** Cfg baseline for CLI mode. */
 	public const array CFG_CLI = [
 
-		/*
-		 *------------------------------------------------------------------
-		 * ERROR HANDLER (CLI)
-		 *------------------------------------------------------------------
-		 *
-		 * Guarantees:
-		 *   - Always logs (JSONL with size-based rotation).
-		 *   - Always renders for:
-		 *       * Uncaught exceptions,
-		 *       * Shutdown fatals (E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR).
-		 *     These are NOT configurable (to prevent silent crashes).
-		 *
-		 * Rendering of non-fatal PHP errors (warnings/notices/etc.) is optional and generally
-		 * only desirable in DEV. Therefore the baseline keeps it OFF; enable in your dev overlay.
-		 *
-		 * Output:
-		 *   - Rendered to STDERR in a compact plain-text format with error_id.
-		 *   - Optional DEV detail may include a truncated stack trace for faster diagnosis.
-		 *
-		 * Logging:
-		 *   - Writes JSONL records including timestamp, error_id, type, argv, cwd, and pid.
-		 *   - Log directory defaults to /var/logs when path is empty.
-		 */		
 		'error_handler' => [
 			'render' => [
-				'force_error_reporting' => null,	// Null: keep current PHP error_reporting unchanged. Set an int mask (for example E_ALL) to force a specific runtime level.
-				'trigger' => 0,						// Which non-fatal PHP errors to render to STDERR. 0 disables rendering; typical dev choice: E_ALL. Fatal errors and uncaught exceptions are always rendered separately.
+				'force_error_reporting' => null,	// PHP error_reporting level set when the error handler is installed, as a bitmask such as E_ALL. null keeps PHP's level.
+				'trigger' => 0,						// Non-fatal PHP error levels written to stderr, as a bitmask; 0 writes none. Uncaught exceptions and fatal errors are always written.
 				'detail' => [
-					'level' => 0,					// Extra render detail level. 0 = compact output only. >=1 = include detailed exception traces in dev. Production/stage should normally keep this at 0.
+					'level' => 0,					// 1 or more adds stack traces to the stderr report of an uncaught exception when CITOMNI_ENVIRONMENT is dev; 0 keeps the report compact.
 					'trace' => [
-						'max_frames'      => 120,	// Max stack frames to include in detailed traces. Lower = less noise and smaller logs/output; higher = more context for deep call chains.
-						'max_arg_strlen'  => 512,	// Max string length per argument when dumping trace args. Lower reduces noise and leakage risk; higher shows more payload context.
-						'max_array_items' => 20,	// Max array items shown per dumped argument. Lower keeps traces readable; higher helps when debugging structured payloads.
-						'max_depth'       => 3,		// Max nested depth when dumping array arguments. Lower avoids huge recursive dumps; higher reveals more nested data.
-						'ellipsis'        => '...',	// Marker used when trace output is truncated. Any short string works, but keep it compact and visually obvious.
+						'max_frames'      => 120,	// Maximum number of frames after the throw site in a stack trace, in log records and on stderr.
+						'max_arg_strlen'  => 512,	// Maximum length in bytes of each string in a trace frame's arguments, nested ones included.
+						'max_array_items' => 20,	// Maximum number of arguments in a trace frame, and of items in an array argument.
+						'max_depth'       => 3,		// Maximum nesting depth of an array argument in a trace frame.
+						'ellipsis'        => '...',	// Marker for what a trace frame leaves out of its arguments, and for the cut end of the command line in a log record.
 					],
 				],
 			],
 			'log' => [
-				'trigger'   => \E_ALL,				// Which non-fatal PHP errors to log. Typical choices: E_ALL, E_ALL & ~E_DEPRECATED, or a narrower mask. Fatal shutdowns and uncaught exceptions are logged separately.
-				'path'      => '',					// Directory for JSONL log files. Empty: hydrate() falls back to CITOMNI_APP_PATH . '/var/logs'. Set an absolute app-local path if you want a custom location.
-				'max_bytes' => 2_000_000,			// Rotate when a log file grows beyond this size in bytes. Lower = more frequent rotation and smaller files; higher = fewer, larger files.
-				'max_files' => 10,					// Number of rotated log files to keep per log stream. 0 or less disables pruning; higher retains more history at the cost of disk usage.
+				'trigger'   => \E_ALL,				// Non-fatal PHP error levels written to the log, as a bitmask. Uncaught exceptions and fatal errors are always logged.
+				'path'      => '',					// Directory of the JSONL log files. Empty means CITOMNI_APP_PATH . '/var/logs'.
+				'max_bytes' => 2_000_000,			// Size in bytes past which a log file is rotated before the next record is appended.
+				'max_files' => 10,					// Number of rotated files kept per log; 0 or less keeps them all.
 			],
 		],
 
@@ -125,24 +77,7 @@ class Registry {
 	
 	
 
-	/**
-	 * Vendor baseline command map for CLI mode.
-	 *
-	 * Behavior:
-	 * - This is tier 1 in the deterministic CLI command map merge:
-	 *   1) Vendor baseline: \CitOmni\Cli\Boot\Registry::COMMANDS_CLI
-	 *   2) Providers: /config/providers.php (their COMMANDS_CLI blocks)
-	 *   3) App base: /config/citomni_cli_commands.php
-	 *   4) Env overlay: /config/citomni_cli_commands.{ENV}.php
-	 * - Command map merge semantics are deep associative merge with last wins.
-	 *
-	 * Notes:
-	 * - Commands live in the dedicated command map, not inside CFG_CLI.
-	 * - The array shape must match the command dispatch contract used by CitOmni\Cli.
-	 * - Providers may contribute additional commands, while the app layer may
-	 *   override or replace vendor/provider commands by command key.
-	 * - Empty arrays are ignored during merge.
-	 */
+	/** CLI commands. */
 	public const array COMMANDS_CLI = [
 		'app:info' => [
 			'command'     => \CitOmni\Cli\Command\AppInfoCommand::class,

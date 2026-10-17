@@ -20,41 +20,22 @@ use CitOmni\Kernel\Command\BaseCommand;
 use CitOmni\Kernel\Mode;
 
 /**
- * Remove the compiled config, dispatch, and service caches.
+ * CacheClearCommand: CLI adapter that removes the compiled caches of the app.
  *
- * CLI adapter over App::clearCache() for deploy scripts. The CLI cache is
- * cleared through the running CLI App. The HTTP cache is cleared through a
- * second App constructed in Mode::HTTP from the same config directory. Later
- * boots of a cleared mode rebuild from sources until the cache is warmed again.
+ * Gives deploy scripts a way to make the next boot of each mode build from its sources again.
+ * Removing the files of a mode belongs to App::clearCache(); this command chooses the modes,
+ * creates the HTTP App it needs and reports the result.
  *
- * Behavior:
- * - --mode=cli removes cfg.cli.php, commands.cli.php, and services.cli.php.
- * - --mode=http removes cfg.http.php, routes.http.php, and services.http.php.
- *   It requires citomni/http (\CitOmni\Http\Boot\Registry); without it the
- *   command returns FAILURE.
- * - --mode=all (default) clears CLI first, then HTTP when citomni/http is
- *   installed. Otherwise HTTP is reported as skipped.
- * - A file that is not present is reported as such; that is not an error.
- * - Prints the removed files per mode on stdout. With --json it prints one
- *   object instead: {ok, modes: {cli: {...}, http: {...} | "skipped"}}.
- * - Writes a fixed OPcache note to stderr whenever the HTTP cache is cleared.
- *
- * Notes:
- * - Exceptions from App construction and clearCache() are not caught; the CLI
- *   error handler renders them and exits 1. That includes a cache file that
- *   exists but cannot be removed.
- * - The running CLI App keeps what it loaded; clearing affects later boots.
- * - Building the HTTP App loads its cache when present. Otherwise it evaluates
- *   the app's HTTP config files in this CLI process (see CacheWarmCommand for
- *   the \CITOMNI_PUBLIC_ROOT_URL caveat in dev).
- *
- * Typical usage:
- *   php bin/citomni cache:clear
- *   php bin/citomni cache:clear --mode=http --json
+ * Rules:
+ * - Clear a mode only through App::clearCache() of an App in that mode.
+ * - Catch no exception from App: A cache that cannot be removed must fail the process, never
+ *   be reported as cleared.
+ * - With --json, write exactly one JSON document to stdout, and nothing else, before execute()
+ *   returns SUCCESS or FAILURE.
  */
 class CacheClearCommand extends BaseCommand {
 
-	/** Written to stderr whenever the HTTP cache was cleared. */
+	/** Lines written to stderr after every clear of the HTTP cache, also one that found no files. */
 	private const OPCACHE_NOTE = [
 		'Note: OPcache invalidation from the CLI does not reach the web server\'s OPcache (PHP-FPM, mod_php).',
 		'With opcache.validate_timestamps=0, reload PHP-FPM or the web server, or POST /_system/reset-cache,',
@@ -63,9 +44,10 @@ class CacheClearCommand extends BaseCommand {
 
 
 	/**
-	 * Define the command options.
+	 * Declare the command interface.
 	 *
-	 * @return array<string, mixed> Command signature.
+	 * @return array<string,array<string,array<string,mixed>>>
+	 * @see \CitOmni\Kernel\Command\BaseCommand::signature()  The signature format.
 	 */
 	protected function signature(): array {
 		return [
@@ -88,9 +70,34 @@ class CacheClearCommand extends BaseCommand {
 
 
 	/**
-	 * Clear the selected caches and report the removed files.
+	 * Clear the caches of the chosen modes and report the removed files.
 	 *
-	 * @return int Command exit code.
+	 * Clears the CLI cache through the running App and the HTTP cache through a second App in
+	 * Mode::HTTP from the same config directory.
+	 *
+	 * Behavior:
+	 * - --mode=all, the default, clears CLI and then HTTP. Without citomni/http, HTTP is
+	 *   reported as skipped.
+	 * - --mode=http without citomni/http clears nothing and fails.
+	 * - A cache file that is not present is reported as not present; that is no failure.
+	 * - Prints the removed files per mode on stdout. With --json, one JSON object instead:
+	 *     - ok true and modes, with the result of App::clearCache() per cleared mode, or
+	 *       "skipped" for HTTP.
+	 *     - ok false, error and an empty modes object when --mode=http finds no citomni/http.
+	 *       The error also goes to stderr.
+	 * - Writes OPCACHE_NOTE to stderr whenever it cleared HTTP, also when there was nothing to
+	 *   clear.
+	 * - Exit code 0, or 1 when --mode=http finds no citomni/http.
+	 *
+	 * Notes:
+	 * - An exception from App ends the process with no JSON document on stdout.
+	 * - The HTTP App loads its cache when one exists, and otherwise evaluates the app's HTTP
+	 *   config files in this CLI process.
+	 *
+	 * @return int  Process exit code.
+	 * @throws \RuntimeException  When an App cannot be built from the config directory, or a cache file exists but cannot be removed.
+	 * @see \CitOmni\Kernel\App::clearCache()  Which files a mode has, and what removing them changes.
+	 * @see \CitOmni\Cli\Command\CacheWarmCommand::execute()  What evaluating the HTTP config files in the CLI requires.
 	 */
 	protected function execute(): int {
 		$mode = $this->getString('mode');
@@ -170,11 +177,10 @@ class CacheClearCommand extends BaseCommand {
 
 
 	/**
-	 * Encode a result object and fail on encoding errors.
+	 * Encode a result as pretty-printed JSON, with slashes and Unicode unescaped.
 	 *
 	 * @param  array<string, mixed>  $data  Result data.
-	 * @return string  Encoded JSON.
-	 * @throws \JsonException  When the data cannot be encoded.
+	 * @return string
 	 */
 	private function encodeJson(array $data): string {
 		return \json_encode(

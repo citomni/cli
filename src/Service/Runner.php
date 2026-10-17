@@ -19,64 +19,43 @@ use CitOmni\Kernel\Command\BaseCommand;
 use CitOmni\Kernel\Service\BaseService;
 
 /**
- * CLI command dispatcher - resolves and executes commands from $app->commands.
+ * Runner: CLI dispatch service that runs the command an argv names.
  *
- * This is the CLI counterpart to \CitOmni\Http\Service\Router. Both are
- * dispatch services: Router matches HTTP paths to controllers, Runner
- * matches command names to BaseCommand classes.
+ * Turns the command name in argv into the command class that the App's command map registers
+ * for it, and hands back that command's exit code. Parsing the command's own arguments and
+ * options belongs to the command; ending the process belongs to the caller.
  *
- * Dispatch pipeline:
- *   1. Extract command name from $argv[1] (missing or 'list' -> list all commands).
- *   2. Look up command definition in $app->commands.
- *   3. Validate definition shape, class existence, and BaseCommand ancestry.
- *   4. Instantiate: new $class($this->app, $commandName, $description, $options).
- *   5. Call $command->run($argv) and return the exit code.
- *
- * Command definition shape (from Registry::COMMANDS_CLI or config files):
- *   'cache:warm' => [
- *       'command'     => \Vendor\Package\Command\CacheWarmCommand::class,
- *       'description' => 'Build and write config, route, and service caches',
- *       'options'     => [],   // optional - passed to command constructor
- *   ],
- *
- * Contract:
- * - Command classes MUST extend \CitOmni\Kernel\Command\BaseCommand.
- * - BaseCommand::run(array $argv): int returns an exit code
- *   (0 = success, 1 = runtime failure, 2 = usage error).
- * - Runner returns the exit code to the caller. It does not call exit() -
- *   that is Kernel::run()'s responsibility.
- *
- * Error handling:
- * - Unknown command name -> error message to stderr, returns exit code 2.
- * - Missing or non-string 'command' key -> RuntimeException (fail-fast).
- * - Non-array 'options' value -> RuntimeException (fail-fast).
- * - Non-existent command class -> RuntimeException (fail-fast).
- * - Class not extending BaseCommand -> RuntimeException (fail-fast).
- *
- * Typical usage (via Kernel):
- *   \CitOmni\Cli\Kernel::run(CITOMNI_APP_PATH . '/config', $argv);
- *
- * Direct usage (tests):
- *   $app = \CitOmni\Cli\Kernel::boot(__DIR__ . '/config');
- *   $exitCode = $app->runner->run(['bin/citomni', 'cache:warm']);
+ * Rules:
+ * - Return the exit code; never end the process.
+ * - Create only subclasses of BaseCommand, with the constructor arguments BaseCommand declares.
+ * - Reject with \RuntimeException an entry whose command class or options cannot be used; never
+ *   fall back to another command.
  */
 class Runner extends BaseService {
 
 	/**
-	 * Dispatch a CLI command based on argv.
+	 * Run the command that argv names and return its exit code.
+	 *
+	 * The command gets the full argv and parses its own arguments and options, --help included.
 	 *
 	 * Behavior:
-	 * - $argv[0] is the script name (ignored for dispatch).
-	 * - $argv[1] is the command name. If absent or 'list', lists all commands.
-	 * - The full $argv array is passed to the command's run() method, so
-	 *   commands can parse their own flags and arguments (including --help).
+	 * - Without a command name, or with "list", prints the registered commands to stdout and
+	 *   returns 0.
+	 * - An unknown command name prints an error to stderr and returns 2.
+	 * - Otherwise creates the command with the App, its name, the entry's description ('' when
+	 *   the entry has no string description) and the entry's options ([] when it has none), and
+	 *   returns the exit code of its run().
 	 *
-	 * @param  array  $argv  Raw CLI arguments (typically $argv from PHP).
-	 * @return int  Exit code from the dispatched command (0 = success).
-	 * @throws \RuntimeException  If the command definition is invalid, the class does not exist,
-	 *                            the class does not extend BaseCommand, or options is not an array.
+	 * Typical usage:
+	 *   $exitCode = $this->app->runner->run(['bin/citomni', 'cache:warm', '--mode=cli']);
+	 *
+	 * @param  list<string>  $argv  The process argv: script, command name, then the command's arguments.
+	 * @return int  Process exit code.
+	 * @throws \RuntimeException  When the command's entry has no string 'command', names a class that does not exist or does not extend BaseCommand, or has 'options' that is not an array.
+	 * @see \CitOmni\Kernel\Command\BaseCommand::run()  How a command parses argv, and the exit codes it returns.
 	 */
 	public function run(array $argv): int {
+		// -- 1. Find the entry -------------------------------------------
 		$commandName = $argv[1] ?? null;
 
 		if ($commandName === null || $commandName === 'list') {
@@ -94,7 +73,7 @@ class Runner extends BaseService {
 
 		$def = $commands[$commandName];
 
-		// -- Validate definition --------------------------------------
+		// -- 2. Validate the entry ---------------------------------------
 		if (!\is_array($def) || !isset($def['command']) || !\is_string($def['command'])) {
 			throw new \RuntimeException("Invalid command definition for '{$commandName}': missing or non-string 'command' key.");
 		}
@@ -112,7 +91,7 @@ class Runner extends BaseService {
 			throw new \RuntimeException("Command options must be an array for '{$commandName}'.");
 		}
 
-		// -- Instantiate and run --------------------------------------
+		// -- 3. Create and run the command -------------------------------
 		$options     = $def['options'] ?? [];
 		$description = (isset($def['description']) && \is_string($def['description'])) ? $def['description'] : '';
 		$instance    = new $class($this->app, $commandName, $description, $options);
@@ -130,10 +109,13 @@ class Runner extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * List all registered commands with their descriptions.
+	 * Print the registered commands, grouped by the part of their name before the first colon.
 	 *
-	 * Groups commands by namespace prefix (the part before the first colon).
-	 * Commands without a colon are listed under "general".
+	 * Behavior:
+	 * - Groups, and the commands in each group, are sorted by name. A name without a colon is in
+	 *   the group "general".
+	 * - Each command is printed with its description, or alone when its entry has no string
+	 *   description.
 	 *
 	 * @return void
 	 */
@@ -151,7 +133,6 @@ class Runner extends BaseService {
 
 		$this->stdout('Available commands:');
 
-		// Group by namespace prefix
 		$groups = [];
 		foreach ($commands as $name => $def) {
 			$colonPos = \strpos($name, ':');
@@ -160,7 +141,6 @@ class Runner extends BaseService {
 		}
 		\ksort($groups);
 
-		// Determine column width for alignment
 		$maxLen = 0;
 		foreach ($commands as $name => $def) {
 			$len = \strlen($name);
@@ -190,7 +170,7 @@ class Runner extends BaseService {
 	/**
 	 * Write a line to stdout.
 	 *
-	 * @param  string  $line  Text to write.
+	 * @param  string  $line  Text without the line ending; PHP_EOL is appended.
 	 * @return void
 	 */
 	private function stdout(string $line): void {
@@ -201,7 +181,7 @@ class Runner extends BaseService {
 	/**
 	 * Write a line to stderr.
 	 *
-	 * @param  string  $line  Text to write.
+	 * @param  string  $line  Text without the line ending; PHP_EOL is appended.
 	 * @return void
 	 */
 	private function stderr(string $line): void {

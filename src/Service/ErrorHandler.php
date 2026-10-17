@@ -18,66 +18,25 @@ namespace CitOmni\Cli\Service;
 use CitOmni\Kernel\Service\BaseService;
 
 /**
- * ErrorHandler: CLI-only global error/exception/shutdown handler for CitOmni.
+ * ErrorHandler: CLI service that reports uncaught exceptions, PHP errors and fatal errors.
  *
- * This is the CLI counterpart to \CitOmni\Http\Service\ErrorHandler. Both are
- * self-contained error handlers that own their own JSONL logging and never
- * depend on the log service (which may not be installed or may itself be broken).
+ * Gives every CLI process one place where failures end up: On stderr for whoever ran the
+ * command, and in JSONL log files, linked by an error id. It writes its own logs instead of
+ * going through the log service, which may be missing or be the failure itself. Whether a
+ * failure is recoverable is the command's decision; an exception that reaches this handler
+ * ends the process, so a long-running worker that must survive a failed job catches the
+ * exception in its own loop.
  *
- * Responsibilities:
- * - Install process-wide exception, error, and shutdown handlers.
- * - Write structured JSONL logs with size-based rotation.
- * - Output human-readable error information to stderr.
- * - Terminate an uncaught exception with exit code 1. A fatal error is reported from the
- *   shutdown handler without exit(), so PHP's exit status for it, 255, stands.
- *
- * Differences from Http\ErrorHandler:
- * - No HTTP response rendering, content negotiation, or output buffer management.
- * - No request correlation (X-Request-Id) - CLI has no inbound request.
- * - No templates - stderr output is plain text.
- * - Terminates an uncaught exception with exit(1), not exit(0) - CLI convention for error.
- * - Log files use cli_err_* prefix instead of http_err_*.
- * - Much simpler by design: CLI errors go to stderr, not to a client.
- *
- * Configuration keys (cfg.error_handler):
- * - error_handler.log.trigger (int bitmask, default E_ALL) - Which PHP errors to log.
- * - error_handler.log.path (string) - Directory for JSONL logs.
- * - error_handler.log.max_bytes (int, default 2_000_000) - Rotation threshold.
- * - error_handler.log.max_files (int, default 10) - Max rotated siblings to retain.
- * - error_handler.render.trigger (int bitmask, default 0) - Non-fatal PHP errors to show on stderr (independent of log.trigger).
- * - error_handler.render.detail.level (int: 0|1) - 0=minimal, 1=traces (effective only in dev).
- * - error_handler.render.detail.trace.max_frames (int, default 120)
- * - error_handler.render.detail.trace.max_arg_strlen (int, default 512)
- * - error_handler.render.detail.trace.max_array_items (int, default 20)
- * - error_handler.render.detail.trace.max_depth (int, default 3)
- * - error_handler.render.detail.trace.ellipsis (string, default "...")
- *
- * Error handling:
- * - Fail-soft inside handlers: Never throw; unexpected failures go to PHP's error_log.
- * - Reentrancy guard prevents recursive handling.
- * - Honors @-suppression and the active error_reporting() level, like the HTTP handler.
- * - E_USER_ERROR is treated as fatal: it is handed back to PHP, which halts the process,
- *   and handleShutdown() logs and renders it (same as HTTP).
- * - Owns stderr: display_errors is forced off, and log_errors too when PHP has no
- *   error_log destination (the CLI SAPI would otherwise print every fatal twice).
- *
- * Typical usage:
- *   // Cli\Kernel::boot() installs this when registered:
- *   $app->errorHandler->install();
- *
- * Notes:
- * - CLI-only by design. HTTP error handling lives in \CitOmni\Http\Service\ErrorHandler.
- * - Self-contained JSONL logging: Does not depend on the log service, which may not
- *   be installed or may itself be the source of the error.
- * - Designed for request-scoped CLI processes (commands). Long-lived workers must
- *   catch exceptions in their own loop body; any exception that reaches the global
- *   handler is treated as unrecoverable and terminates the process with exit(1).
- * - A log record keeps at most ARGV_MAX_BYTES of the command line, so the record of an
- *   out-of-memory fatal stays within what MEMORY_RESERVE_BYTES can write.
+ * Rules:
+ * - Never throw from a handler or anything it calls; report an internal failure to PHP's
+ *   error_log and carry on.
+ * - Use no other service: The handler must work when the App's services do not.
+ * - Keep traces, their arguments, previous exceptions and the command line within their
+ *   limits in every report and log record.
  */
 class ErrorHandler extends BaseService {
 
-	/** JSON flags for log records: invalid UTF-8 is substituted, never turned into null. */
+	/** JSON flags for log records and trace array keys: Invalid UTF-8 is substituted, never turned into null. */
 	private const JSON_FLAGS = \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_PARTIAL_OUTPUT_ON_ERROR | \JSON_INVALID_UTF8_SUBSTITUTE;
 
 	/** Maximum number of previous exceptions logged and rendered per uncaught exception. */
@@ -86,48 +45,52 @@ class ErrorHandler extends BaseService {
 	/** Bytes install() reserves and handleShutdown() releases first, so an out-of-memory fatal leaves room to report it. */
 	private const MEMORY_RESERVE_BYTES = 65536;
 
-	/** Bytes of the command line a log record keeps; the rest is cut. */
+	/** Bytes of the command line a log record keeps, so the record of an out-of-memory fatal fits in the memory reserve. */
 	private const ARGV_MAX_BYTES = 4096;
 
-	/** Frozen options: cfg.error_handler merged with ctor $options. */
+	/** @var array<string,mixed> Options: cfg error_handler with the service options on top. */
 	private array $opt = [];
 
-	/** Non-fatal PHP error bitmask that should render to stderr (fatals are shutdown-only). */
+	/** Non-fatal PHP error levels written to stderr. */
 	private int $renderMask = 0;
 
-	/** PHP error bitmask to log (applies to non-fatals; fatals logged in shutdown). */
+	/** Non-fatal PHP error levels written to the log. */
 	private int $logMask = 0;
 
-	/** Absolute log directory (no trailing slash). */
+	/** Log directory, without a trailing slash. */
 	private string $logDir = '';
 
-	/** Max size in bytes of the live JSONL file before rotation. */
+	/** Size in bytes past which a log file is rotated before the next record is appended. */
 	private int $maxBytes = 2_000_000;
 
-	/** How many rotated siblings to keep (newest first). */
+	/** Number of rotated files kept per log; 0 or less keeps them all. */
 	private int $maxFiles = 10;
 
-	/** Reentrancy guard: Prevents recursive handling. */
+	/** Whether handleException() is reporting an exception right now. */
 	private static bool $inHandler = false;
 
-	/** When true, include developer details (only effective in dev). */
+	/** Whether the stderr report of an uncaught exception includes stack traces. */
 	private bool $devDetail = false;
 
-	/** Trace shaping limits. */
+	/** Maximum number of frames after the throw site in a stack trace. */
 	private int $traceMaxFrames = 120;
+
+	/** Maximum length in bytes of each string in a trace frame's arguments, nested ones included. */
 	private int $traceMaxArgStr = 512;
+
+	/** Maximum number of arguments in a trace frame, and of items in an array argument. */
 	private int $traceMaxItems  = 20;
+
+	/** Maximum nesting depth of an array argument in a trace frame. */
 	private int $traceMaxDepth  = 3;
+
+	/** Marker for what a trace frame leaves out of its arguments, and for the cut end of the logged command line. */
 	private string $ellipsis    = '...';
 
-	/** Idempotency flag: Ensures install() runs only once. */
+	/** Whether install() has run on this instance. */
 	private bool $installed = false;
 
-	/**
-	 * Memory released first in handleShutdown(), so an "Allowed memory size exhausted"
-	 * fatal can still be logged and rendered. PHP enforces memory_limit again once
-	 * shutdown functions run, and a full heap would otherwise fail a second time.
-	 */
+	/** Memory that handleShutdown() releases before anything else; null when none is held. */
 	private static ?string $memoryReserve = null;
 
 
@@ -142,25 +105,26 @@ class ErrorHandler extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * Initialize configuration from cfg and constructor options, then hydrate fields.
+	 * Read the handler's options once, from cfg and the service options.
 	 *
 	 * Behavior:
-	 * - Reads cfg->error_handler exactly once and unwraps to a plain array.
-	 * - Merges ctor $this->options over cfg using deterministic "last wins".
-	 * - Freezes runtime options by clearing $this->options after the merge.
-	 * - Calls hydrate() to populate all internal fields from $this->opt.
-	 * - Swallows cfg read failures, a missing error_handler node included, logs them to
-	 *   PHP's error_log and falls back to an empty config.
+	 * - Service options win over cfg error_handler, key by key.
+	 * - Never throws: When cfg error_handler cannot be read, a missing node included, the
+	 *   failure goes to PHP's error_log and the handler works with the service options and
+	 *   built-in defaults.
+	 * - Empties $this->options; the handler keeps its own merged copy.
 	 *
 	 * Notes:
-	 * - No global side effects: Does not modify INI or resolve other services.
-	 * - This method never throws; failures are treated as "no config".
+	 * - Changes no PHP setting; that waits for install().
 	 *
 	 * @return void
+	 * @see \CitOmni\Kernel\Service\BaseService::__construct()  Calls it once per instance.
 	 */
 	protected function init(): void {
 		$cfgNode = [];
 
+		// Boot infrastructure: A cfg that cannot be read must not leave the process without
+		// an error handler.
 		try {
 			$raw = $this->app->cfg->error_handler;
 			$cfgNode = ($raw instanceof \CitOmni\Kernel\Cfg)
@@ -179,17 +143,15 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Hydrate internal fields from merged options.
+	 * Set the typed fields from the merged options.
 	 *
 	 * Behavior:
-	 * - Reads $this->opt and assigns strongly-typed properties.
-	 * - Sanitizes render mask to exclude fatal-class errors.
-	 * - Developer details enabled only when level >= 1 AND environment is dev.
-	 * - Values are cast to the field types, not validated; a missing key keeps a built-in
-	 *   default, so the handler still works when init() fell back to an empty config.
-	 *
-	 * Notes:
-	 * - Pure in-memory: No I/O, no service lookups, no global effects.
+	 * - Casts each value to its field's type without validating it. A missing key gets a
+	 *   built-in default, so the handler also works when init() found no cfg.
+	 * - Drops the fatal levels from render.trigger: Fatal errors are reported by handleShutdown().
+	 * - Turns on stack traces in the stderr report of an uncaught exception only when
+	 *   render.detail.level is 1 or more and CITOMNI_ENVIRONMENT is dev.
+	 * - An empty log.path means CITOMNI_APP_PATH . '/var/logs'.
 	 *
 	 * @return void
 	 */
@@ -220,20 +182,22 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Install global handlers for the CLI process.
+	 * Install the process-wide exception, error and shutdown handlers.
+	 *
+	 * Takes over error output for the process: From here on, PHP's errors reach stderr only
+	 * through this handler.
 	 *
 	 * Behavior:
-	 * - Registers exception, error, and shutdown handlers.
-	 * - Forces display_errors=0 to prevent PHP from writing to stdout
-	 *   (all error output goes to stderr through this handler).
-	 * - Forces log_errors=0 when error_log is empty. The CLI SAPI then writes PHP's own
-	 *   log lines to stderr, so every fatal would be printed twice. An explicit error_log
-	 *   destination (file or syslog) is left alone.
-	 * - Reserves MEMORY_RESERVE_BYTES that handleShutdown() releases before doing anything else.
-	 * - Idempotent: A second call is a no-op.
+	 * - Sets error_reporting() to render.force_error_reporting when that is an int.
+	 * - Turns display_errors off, so PHP writes no error to stdout.
+	 * - Turns log_errors off when PHP has no error_log destination. The CLI SAPI would otherwise
+	 *   write PHP's own report of every fatal error to stderr next to this handler's. An
+	 *   error_log file or syslog is left alone.
+	 * - Reserves MEMORY_RESERVE_BYTES for handleShutdown().
+	 * - A second call does nothing.
 	 *
-	 * Notes:
-	 * - Uses only pre-hydrated options; does not resolve other services.
+	 * Typical usage:
+	 *   $this->app->errorHandler->install();
 	 *
 	 * @return void
 	 */
@@ -275,14 +239,18 @@ class ErrorHandler extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * Handle an uncaught exception: log, render to stderr, and terminate.
+	 * Report an uncaught exception and end the process with exit code 1.
 	 *
 	 * Behavior:
-	 * - Re-entrancy-safe via static guard.
-	 * - Logs a structured JSONL record with code, trace, and the previous-exception chain.
-	 * - Outputs a human-readable summary to stderr.
-	 * - Terminates with exit(1).
+	 * - Logs one record to cli_err_exception.jsonl with class, code, message, throw site, trace
+	 *   and up to MAX_PREVIOUS previous exceptions.
+	 * - Writes the class, message, throw site and error id to stderr, followed by up to
+	 *   MAX_PREVIOUS previous exceptions, with stack traces when developer details are on.
+	 * - Ends with exit code 1 in every case. A failed log write goes to PHP's error_log and the
+	 *   stderr report is still written; a failed stderr write is ignored.
+	 * - Returns without doing anything when it is called while it is already reporting.
 	 *
+	 * @param  \Throwable  $e  The uncaught exception.
 	 * @return void
 	 */
 	public function handleException(\Throwable $e): void {
@@ -317,15 +285,18 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Handle non-fatal PHP errors (warnings, notices, deprecations).
+	 * Report a PHP warning, notice or deprecation, or leave it to PHP.
+	 *
+	 * PHP calls it for every diagnostic that reaches a user error handler. Its return value
+	 * tells PHP whether this handler has dealt with the diagnostic.
 	 *
 	 * Behavior:
 	 * - Ignores diagnostics that @ or error_reporting() suppress (returns false), so @
 	 *   keeps working and PHP still records them for error_get_last().
 	 * - Hands E_USER_ERROR back to PHP (returns false). PHP halts the process, and
 	 *   handleShutdown() logs and renders it.
-	 * - Logs when the level is in log.trigger and renders to stderr when it is in
-	 *   render.trigger. The two masks are independent.
+	 * - Logs to cli_err_phperror.jsonl when the level is in log.trigger, and writes to stderr
+	 *   when it is in render.trigger. The two masks are independent.
 	 * - Returns false when neither mask matches, so PHP's internal handler decides.
 	 * - Otherwise returns true, which skips PHP's internal handler.
 	 *
@@ -389,12 +360,13 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Shutdown handler: Reports a fatal engine error on stderr and in the log.
+	 * Report the fatal error that ends the process, on stderr and in cli_err_shutdown.jsonl.
 	 *
 	 * Behavior:
 	 * - Releases the memory reserve first, so an out-of-memory fatal can be reported.
-	 * - Acts only on fatal-class errors (E_ERROR, E_PARSE, etc.).
-	 * - Writes the report to stderr before the JSONL record, so a log write that fails, for
+	 * - Acts only when the last error is fatal-class (E_ERROR, E_PARSE, E_CORE_ERROR,
+	 *   E_COMPILE_ERROR or E_USER_ERROR); otherwise does nothing.
+	 * - Writes the report to stderr before the log record, so a log write that fails, for
 	 *   lack of memory or otherwise, leaves the report in place.
 	 * - Returns without exit(): Shutdown functions registered after this one still run.
 	 *
@@ -405,6 +377,8 @@ class ErrorHandler extends BaseService {
 	 * @return void
 	 */
 	public function handleShutdown(): void {
+		// PHP enforces memory_limit again once shutdown functions run, so after an
+		// out-of-memory fatal a full heap would fail a second time.
 		self::$memoryReserve = null;
 
 		$e = \error_get_last();
@@ -494,12 +468,13 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Render a formatted stack trace to stderr.
+	 * Write a stack trace to stderr, one numbered frame per line, starting with the throw site.
 	 *
-	 * @param  array   $trace  Raw trace from Throwable::getTrace().
-	 * @param  string  $file   Throw-site file.
-	 * @param  int     $line   Throw-site line.
+	 * @param  array<int, array<string, mixed>>  $trace  Raw trace from Throwable::getTrace().
+	 * @param  string                            $file   Throw-site file.
+	 * @param  int                               $line   Throw-site line.
 	 * @return void
+	 * @see \CitOmni\Cli\Service\ErrorHandler::traceArray()  The frames and their limits.
 	 */
 	private function renderTrace(array $trace, string $file, int $line): void {
 		$frames = $this->traceArray($trace, $file, $line);
@@ -755,8 +730,9 @@ class ErrorHandler extends BaseService {
 	 *
 	 * Behavior:
 	 * - Counts as a rotation only a file next to $file whose name rotate() could have created:
-	 *   <base>.<UTC timestamp><ext>, with or without a collision suffix. Other files, the
-	 *   rotations of other logs included, are left alone.
+	 *   The name of $file without its extension, a dot, a UTC timestamp and the extension, with or
+	 *   without a collision suffix. Other files, the rotations of other logs included, are
+	 *   left alone.
 	 * - Keeps the $max newest by the timestamp in their names and deletes the rest; a failed
 	 *   deletion is ignored.
 	 *
@@ -828,7 +804,7 @@ class ErrorHandler extends BaseService {
 	 * write to a plain file, that diagnostic is the operation's cause. After an operation that
 	 * fails without one, it can be an earlier diagnostic from this file.
 	 *
-	 * @return string  ": <diagnostic>", or an empty string when there is none or another file raised it.
+	 * @return string  ": " followed by the diagnostic, or an empty string when there is none or another file raised it.
 	 */
 	private function lastFailure(): string {
 		$last = \error_get_last();
@@ -847,11 +823,11 @@ class ErrorHandler extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * Build a canonical baseline for CLI log records.
+	 * Build the fields that every log record starts with.
 	 *
-	 * @param  string  $type     Category: 'exception'|'shutdown'|'php_error'.
+	 * @param  string  $type     Category: 'exception', 'shutdown' or 'php_error'.
 	 * @param  string  $errorId  Correlation id for this error event.
-	 * @return array<string, mixed>
+	 * @return array{ts: string, error_id: string, type: string, mode: string, argv: list<string>, cwd: string, pid: int}  ts is ISO 8601 in PHP's timezone; mode is 'cli'.
 	 * @see \CitOmni\Cli\Service\ErrorHandler::argvForRecord()  How the command line is cut.
 	 */
 	private function baseRecord(string $type, string $errorId): array {
@@ -923,9 +899,9 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Generate a new internal error id.
+	 * Generate a new random error id.
 	 *
-	 * @return string  e.g. "e_1a2b3c4d5e6f7a8b"
+	 * @return string  "e_" followed by 16 lowercase hex digits.
 	 */
 	private function newErrorId(): string {
 		return 'e_' . \substr(\bin2hex(\random_bytes(8)), 0, 16);
@@ -943,8 +919,11 @@ class ErrorHandler extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * Whether a PHP error number is a fatal-class error.
+	 * Tell whether a PHP error level is fatal-class.
 	 *
+	 * The fatal-class levels are E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR and E_USER_ERROR.
+	 *
+	 * @param  int  $errno  Single PHP error level.
 	 * @return bool
 	 */
 	private function isFatal(int $errno): bool {
@@ -953,19 +932,18 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Human-readable label for a single PHP error-level constant.
+	 * Return the constant name of a single PHP error level, such as E_WARNING.
 	 *
-	 * Maps individual levels (E_WARNING, E_NOTICE, etc.) to their constant name.
-	 * Not intended for bitmasks (E_ALL, E_ALL & ~E_NOTICE, etc.) — PHP calls
-	 * error handlers with one level at a time, which is this method's scope.
+	 * Notes:
+	 * - Meant for one level at a time, the way PHP calls an error handler. A bitmask such as
+	 *   E_ALL is reported as unknown.
 	 *
-	 * E_STRICT is not mapped: PHP no longer raises it, and since PHP 8.4 reading the
-	 * constant raises E_DEPRECATED, which would fire from inside the error handler.
-	 *
-	 * @param  int  $errno  Single PHP error-level constant.
-	 * @return string  Constant name or "E_UNKNOWN(N)" for unrecognized levels.
+	 * @param  int  $errno  Single PHP error level.
+	 * @return string  Constant name, or "E_UNKNOWN(N)" with the level as N when it is not recognized.
 	 */
 	private function errorLevelLabel(int $errno): string {
+		// No E_STRICT: PHP no longer raises it, and since PHP 8.4 reading the constant raises
+		// E_DEPRECATED, which would fire from inside the error handler.
 		return match ($errno) {
 			E_ERROR             => 'E_ERROR',
 			E_WARNING           => 'E_WARNING',
@@ -996,12 +974,18 @@ class ErrorHandler extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * Format a backtrace into a safe, bounded array for logs and stderr.
+	 * Format a backtrace into a bounded list of frames for logs and stderr.
+	 *
+	 * Behavior:
+	 * - The first frame is the throw site, with the function "(thrown)".
+	 * - At most traceMaxFrames frames of $trace follow, each with its call formatted; when there
+	 *   are more, an ellipsis entry ends the list.
 	 *
 	 * @param  array<int, array<string, mixed>>  $trace  Raw trace from Throwable::getTrace().
-	 * @param  string  $file  Throw-site file.
-	 * @param  int     $line  Throw-site line.
-	 * @return array<int, array<string, mixed>>  Bounded, log-friendly frames.
+	 * @param  string                            $file   Throw-site file.
+	 * @param  int                               $line   Throw-site line.
+	 * @return list<array{file: string, line: int, function: string}|array{file: string, line: int, call: string}|array{ellipsis: true}>
+	 * @see \CitOmni\Cli\Service\ErrorHandler::formatCall()  How a call is formatted.
 	 */
 	private function traceArray(array $trace, string $file, int $line): array {
 		$out = [['file' => $file, 'line' => $line, 'function' => '(thrown)']];
@@ -1025,10 +1009,15 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Render one trace frame's callable with compact argument preview.
+	 * Format the call of one trace frame, with a bounded preview of its arguments.
+	 *
+	 * Behavior:
+	 * - Shows at most traceMaxItems arguments; the ellipsis marker stands for the rest.
+	 * - Shows no arguments when the frame has none, such as when PHP leaves them out of traces.
 	 *
 	 * @param  array<string, mixed>  $f  One frame from a backtrace.
-	 * @return string  Human-readable call signature.
+	 * @return string  Class, call type and function, then the arguments in parentheses.
+	 * @see \CitOmni\Cli\Service\ErrorHandler::dumpArg()  How an argument is shown.
 	 */
 	private function formatCall(array $f): string {
 		$fn   = (string)($f['function'] ?? 'unknown');
@@ -1055,9 +1044,14 @@ class ErrorHandler extends BaseService {
 	/**
 	 * Format a single argument for trace output with depth and size limits.
 	 *
+	 * Behavior:
+	 * - Strings are quoted and cut; arrays show their items down to traceMaxDepth; an object
+	 *   shows only its class.
+	 * - Returns the ellipsis marker at traceMaxDepth.
+	 *
 	 * @param  mixed  $v      Value to render.
 	 * @param  int    $depth  Current recursion depth.
-	 * @return string  Safe, single-line representation.
+	 * @return string
 	 */
 	private function dumpArg(mixed $v, int $depth): string {
 		if ($depth >= $this->traceMaxDepth) {
@@ -1077,10 +1071,10 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Quote and truncate a string for trace output.
+	 * Quote a string for trace output, cut to traceMaxArgStr bytes.
 	 *
 	 * @param  string  $s  Input string.
-	 * @return string  Quoted, possibly truncated string.
+	 * @return string  The string in single quotes; a cut string ends with the ellipsis marker inside the quotes.
 	 */
 	private function truncate(string $s): string {
 		if (\strlen($s) <= $this->traceMaxArgStr) {
@@ -1091,11 +1085,15 @@ class ErrorHandler extends BaseService {
 
 
 	/**
-	 * Render an array for traces with item and depth limits.
+	 * Format an array for trace output with item and depth limits.
+	 *
+	 * Behavior:
+	 * - Shows at most traceMaxItems items as key=>value, with JSON-encoded keys; the ellipsis
+	 *   marker stands for the rest.
 	 *
 	 * @param  array<mixed>  $a      Array to render.
 	 * @param  int           $depth  Current recursion depth.
-	 * @return string  Compact, single-line array representation.
+	 * @return string  The items in square brackets.
 	 */
 	private function dumpArray(array $a, int $depth): string {
 		$items = [];
@@ -1118,9 +1116,9 @@ class ErrorHandler extends BaseService {
 	// ----------------------------------------------------------------
 
 	/**
-	 * Write a line to stderr.
+	 * Write a line to stderr; a failed write is ignored.
 	 *
-	 * @param  string  $line  Text to write.
+	 * @param  string  $line  Text without the line ending; PHP_EOL is appended.
 	 * @return void
 	 */
 	private function stderr(string $line): void {
