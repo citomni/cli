@@ -241,7 +241,8 @@ class GreetCommand extends BaseCommand {
 	/**
 	 * Declare the accepted command input.
 	 *
-	 * @return array<string, mixed> Command signature.
+	 * @return array{arguments?: array<string,array<string,mixed>>, options?: array<string,array<string,mixed>>}
+	 * @see \CitOmni\Kernel\Command\BaseCommand::signature()  The signature format.
 	 */
 	protected function signature(): array {
 		return [

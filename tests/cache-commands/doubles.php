@@ -208,7 +208,7 @@ abstract class BaseCommandDouble {
 	/**
 	 * Declare the command interface; none by default.
 	 *
-	 * @return array<string,array<string,array<string,mixed>>>
+	 * @return array{arguments?: array<string,array<string,mixed>>, options?: array<string,array<string,mixed>>}
 	 */
 	protected function signature(): array {
 		return [];
@@ -359,8 +359,8 @@ final class HelpFormatterDouble {
 	/**
 	 * Return a fixed usage line with the command name.
 	 *
-	 * @param  string                $commandName  Command name.
-	 * @param  array<string, mixed>  $signature    Unused.
+	 * @param  string  $commandName  Command name.
+	 * @param  array{arguments?: array<string,array<string,mixed>>, options?: array<string,array<string,mixed>>}  $signature  Unused.
 	 * @return string
 	 */
 	public static function usage(string $commandName, array $signature): string {
