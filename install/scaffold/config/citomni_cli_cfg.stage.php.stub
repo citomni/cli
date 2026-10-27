@@ -24,7 +24,8 @@ declare(strict_types=1);
  *   layers before this file. Stage keys shared with HTTP belong in
  *   citomni_cfg.stage.php.
  * - Leave a key out to keep the earlier value. Never write an empty
- *   array as a placeholder; it replaces the earlier value.
+ *   array as a placeholder; it leaves a map as it is, but replaces a
+ *   list or any other value.
  * - Comment why a key deviates when the value does not show it. What a
  *   key means is documented where the key is defined.
  *
